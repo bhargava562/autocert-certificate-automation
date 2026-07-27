@@ -1,0 +1,9 @@
+services:
+  backend:
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: debug
+
+  frontend:
+    environment:
+      APP_ENV: development
