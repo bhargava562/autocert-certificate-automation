@@ -1,44 +1,74 @@
-# Claude Instructions
+# Claude Instructions — Autocert Certificate Automation
 
-## Project Context
+## Current Project Memory Checkpoint
 
-Autocert is a certificate automation module built as a plug-in service for a parent dashboard. Implementation follows the architecture plan in `docs/architecture-prd.md` and the 9-table ERD schema managed in `backend/supabase/`.
+Autocert is a plug-in certificate automation module built for an external parent dashboard. The current state is fully native (zero Docker), backed by Python 3.12+ and Supabase.
 
-## Operating Rules
+### 1. Current State of Repository
+- **Database Architecture (9 Core Tables)**: Codified in `backend/supabase/migrations/`:
+  - `data_sources`, `batches`, `batch_progress`, `participants`, `generation_tasks`, `certificates`, `delivery_tasks`, `deliveries`, `previews`.
+- **Supabase Storage**: Active buckets `certificates` (10MB) and `templates` (25MB) provisioned and verified.
+- **SOLID Modular Certificate Engine (`backend/app/`)**:
+  - `TemplateProvider` Protocol (`LocalTemplateProvider`, `SupabaseTemplateProvider`).
+  - `CertificateEngine` Protocol (`PillowImageEngine`, `PyMuPdfEngine`, `DocxTemplateEngine`).
+  - `CertificateEngineFactory` (resolves engine dynamically by file extension).
+  - `TextFittingService` (dynamic auto-scaling, horizontal centering, word wrapping — eliminates random X/Y coordinates).
+  - `StorageSink` Protocol (`LocalDiskSink`, `SupabaseStorageSink`).
+  - `CertificatePipeline` (Dependency-injected orchestrator).
+- **Execution Modes**:
+  - **Local Mode**: Reads from `backend/sample_templates/` and outputs directly to `backend/sample_templates/output/`.
+  - **Cloud Mode**: Reads from Supabase `templates` bucket and uploads to `certificates` bucket with signed URLs.
+- **Mock Dataset**: 5 diverse participants in `backend/sample_data/mock_participants.json`.
+- **Dependencies**: Pinned exact versions in `backend/requirements.txt`.
+- **Standby State**: Awaiting user instruction to execute the test runner (`backend/run_generation_test.py`).
 
-- Use native Python (3.12+) and native Node (20+/24+) execution for all tasks.
-- Do not introduce Docker, Docker Compose, or container setups.
-- Never modify or delete `backend/.env`. Maintain `backend/.env.example` when adding configuration options.
-- Keep code loosely coupled, modular, and aligned with SOLID and DRY principles.
-- Favor ports and adapters, explicit interfaces, and small focused modules.
-- Preserve the dashboard integration contract; do not introduce assumptions that require the parent dashboard to be modified.
+---
+
+## Domain Architecture Flow
+
+```text
+Data Source ➔ Batch ➔ Participant Snapshot ➔ Generation Task ➔ Certificate ➔ Delivery Task ➔ Delivery
+                     ├── Batch Progress (Decoupled Atomic Counters)
+                     └── Preview (Human Approval Gate Evidence: First 5, Random 5, Failure Report)
+```
+
+---
 
 ## Mandatory Execution & Git Workflow Rules
 
-1. **Initialize Python Virtual Environment First**:
-   - Always initialize the Python virtual environment (`.venv` in `backend/`) before executing scripts, running tests, or installing dependencies.
-   - Always activate `.venv` explicitly before any command: `.venv\Scripts\activate` (Windows) or `source .venv/bin/activate` (Unix).
-2. **Install Modules Only Inside Activated Venv**:
-   - Never install packages into the host's global environment.
-   - Run `pip install` only after `.venv` is active, and update `backend/requirements.txt`.
+1. **Initialize Python Virtual Environment**:
+   - Always initialize and activate `.venv` inside `backend/` before running any scripts:
+     ```powershell
+     cd backend
+     if (!(Test-Path .venv)) { python -m venv .venv }
+     .venv\Scripts\Activate.ps1
+     ```
+
+2. **Install Modules from `requirements.txt` Inside Active `.venv`**:
+   - Never install packages into the global environment:
+     ```powershell
+     pip install -r requirements.txt
+     ```
+
 3. **Compile & Validate Properly**:
-   - Always validate Python code (`python -m py_compile ...` or pytest) and SQL syntax before declaring a task finished.
-   - Maintain zero syntax or runtime import errors.
+   - Always compile and validate code before declaring work complete:
+     ```powershell
+     .venv\Scripts\python -m compileall backend
+     ```
+   - Ensure zero syntax, import, or type errors.
+
 4. **Commit and Push Whenever Required**:
-   - Stage and commit changes with clear, descriptive commit messages upon completing significant tasks or phases.
-   - Push committed code to the active git branch (`git push origin main`) to keep work durable and synchronized.
+   - Commit code with atomic, descriptive messages (`feat(...)`, `fix(...)`, `docs(...)`).
+   - Push commits to `origin/main` to keep progress durable and synchronized.
 
-## Architecture Guardrails
+5. **Protect Sensitive Credentials**:
+   - `backend/.env` contains live Supabase credentials. **It must never be modified or deleted.**
+   - Maintain `backend/.env.example` when adding new configuration options.
 
-- Keep the FastAPI backend and React frontend separated by a clear API boundary.
-- Avoid tightly coupled implementations between generation, storage, delivery, and approval flows.
-- Keep batch, participant, certificate, and delivery responsibilities distinct.
-- Respect the version-pinned template model and immutable import snapshot model described in the PRD.
-- Follow the 9 core ERD tables: `data_sources`, `batches`, `batch_progress`, `participants`, `generation_tasks`, `certificates`, `delivery_tasks`, `deliveries`, `previews`.
-- Storage is managed in Supabase Storage (`certificates` and `templates` buckets).
+---
 
-## Workflow Preference
+## Technical Guardrails
 
-- Run backend commands directly: `python -m venv .venv`, `pip install ...`, `uvicorn main:app --reload`.
-- Run migrations via `python supabase/migrate.py` or `node supabase/migrate.js`.
-- Provision storage buckets via `python supabase/init_storage.py`.
+- **Zero Docker**: Run natively on host Windows environment.
+- **SOLID Design**: All certificate generators implement `CertificateEngine` protocol; orchestrator depends on abstractions, not concrete engines.
+- **Dynamic Mapping**: Never use random/arbitrary coordinates. Use normalized percentages, dynamic font downscaling, and text bounding box calculations.
