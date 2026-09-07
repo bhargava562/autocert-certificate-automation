@@ -1,56 +1,84 @@
 # GitHub Copilot Instructions — Autocert Certificate Automation
 
-## Project Memory & Context
+## Current Project Memory Checkpoint
 
-Autocert is a plug-in certificate automation module for an external dashboard, built with:
-- **Backend:** Python (3.12+) with FastAPI and Uvicorn.
-- **Database:** Supabase PostgreSQL (managed via SQL migrations in `backend/supabase/migrations/`).
-- **Storage:** Supabase Storage (`certificates` and `templates` buckets, accessed via signed URLs).
-- **Architecture Source of Truth:** `docs/architecture-prd.md`.
-- **Core Domain Flow:** `Data Source` ➔ `Batch` ➔ `Participant Snapshot` ➔ `Generation Task` ➔ `Certificate` ➔ `Delivery Task` ➔ `Delivery` (with `Batch Progress` atomic counters and `Preview` approval gate).
+Autocert is an isolated certificate automation module designed to plug into an external parent dashboard. The project runs **natively** (zero Docker) on Python 3.12+ and Supabase (PostgreSQL & Storage).
 
-### Confirmed 9 Core Database Tables
-1. `data_sources` — Records origin (CSV, Google Sheets, Google Forms, Manual).
-2. `batches` — Tracks FSM state (`CREATED` to `COMPLETED` / `PARTIAL_SUCCESS`), template pinning (`template_id`, `template_version`).
-3. `batch_progress` — Decoupled atomic counters (`total_count`, `generated_count`, `sent_count`, `failed_count`) to avoid row locks.
-4. `participants` — Immutable snapshot frozen at import time with dynamic `participant_data JSONB` and validation status.
-5. `generation_tasks` — Task-level granularity for per-row retries at scale (up to 50k rows).
-6. `certificates` — Generated metadata, version pinning, file hashes, and storage paths.
-7. `delivery_tasks` — Individual delivery jobs with unique `idempotency_key = sha256(certificate_id)` for crash safety.
-8. `deliveries` — Provider dispatch records storing message IDs and errors for zero-log troubleshooting.
-9. `previews` — Preview certificate references (first 5, random 5, failure reports) for the human approval gate.
+### 1. Where the Project Is Right Now (Checkpoint)
+- **Database & Storage Layer**:
+  - All 9 core ERD tables are codified in `backend/supabase/migrations/20260907000001_initial_erd_schema.sql` (`data_sources`, `batches`, `batch_progress`, `participants`, `generation_tasks`, `certificates`, `delivery_tasks`, `deliveries`, `previews`).
+  - Storage setup in `backend/supabase/migrations/20260907000002_storage_setup.sql`.
+  - Storage buckets `certificates` (10MB limit) and `templates` (25MB limit) have been provisioned and are active on Supabase.
+  - Migration runners: `backend/supabase/migrate.py` (Python) and `backend/supabase/migrate.js` (Node.js).
+- **SOLID Modular Certificate Generation Engine (`backend/app/`)**:
+  - `TemplateProvider` protocol with `LocalTemplateProvider` (folder-in) and `SupabaseTemplateProvider` (cloud storage).
+  - `CertificateEngine` protocol with:
+    - `PillowImageEngine`: Raster rendering with dynamic auto-scaling, horizontal centering, and script fonts.
+    - `PyMuPdfEngine`: Vector PDF search (`THIS CERTIFICATE IS PRESENTED TO`), dynamic bounding box, and vector text insertion.
+    - `DocxTemplateEngine`: Word DOCX templates with Jinja2 tags via `docxtpl`.
+  - `CertificateEngineFactory`: Resolves engines by file extension (`.png`, `.pdf`, `.docx`).
+  - `TextFittingService`: Measures bounding boxes, dynamically downsizes fonts for long names (no random X/Y), and computes true center.
+  - `StorageSink` protocol with `LocalDiskSink` (folder-out to `sample_templates/output/`) and `SupabaseStorageSink`.
+  - `CertificatePipeline`: Orchestrator coordinating generation via Dependency Injection.
+- **Test Assets & Mock Data**:
+  - Real template in `backend/sample_templates/`: `Black Gold Formal Appreciation Certificate.png` and `.pdf`.
+  - 5-member mock dataset in `backend/sample_data/mock_participants.json` (including standard, long, and hyphenated names).
+  - Test runner: `backend/run_generation_test.py` (`--mode local` and `--mode cloud`).
+- **Dependencies**:
+  - Pinned exact versions in `backend/requirements.txt`.
+- **Next Action on Standby**:
+  - Awaiting user instruction to trigger the generation test.
 
 ---
 
-## Operating & Workflow Rules
+## Architecture & Domain Flow
 
-### 1. Python Virtual Environment First (Mandatory)
-- **Always initialize/verify Python virtual environment (`.venv`) before doing anything in the backend:**
+```text
+Data Source ➔ Batch ➔ Participant Snapshot ➔ Generation Task ➔ Certificate ➔ Delivery Task ➔ Delivery
+                     ├── Batch Progress (Decoupled Atomic Counters)
+                     └── Preview (Human Approval Gate Evidence: First 5, Random 5, Failure Report)
+```
+
+### Core Design Rules
+1. **Immutable Snapshot**: Participant data is frozen into `participants` at import time with `participant_data JSONB`. External sheets/forms are never accessed again during generation.
+2. **Task-Level Granularity**: `generation_tasks` and `delivery_tasks` are the units of retry at 50k scale (never regenerate the whole batch).
+3. **Idempotency by Design**: `delivery_tasks.idempotency_key = sha256(certificate_id)` with a unique constraint prevents duplicate emails on crash/restart.
+4. **Decoupled Progress**: `batch_progress` separates `generated_count`, `sent_count`, `failed_count` from `batches` to eliminate row-lock contention.
+
+---
+
+## Mandatory Execution & Git Workflow Rules
+
+### 1. Initialize Python Virtual Environment & Install Modules
+- Always initialize and verify the Python virtual environment (`backend/.venv`) before running anything.
+- **Install dependencies from `requirements.txt` strictly inside the activated `.venv`**:
   ```powershell
-  # Windows
   cd backend
   if (!(Test-Path .venv)) { python -m venv .venv }
   .venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
   ```
-- **Never install Python packages globally.** Always ensure `.venv` is activated before running `pip install`.
-- Always track newly introduced backend packages in `backend/requirements.txt` or `pyproject.toml`.
+- Never install packages into the global Python environment.
 
-### 2. Native-First Workflow (Strictly Zero Docker)
-- All development, testing, and runtime checks must run **natively** on the host environment (Windows / PowerShell).
-- Do **not** create, suggest, or introduce Dockerfiles, docker-compose files, or container wrappers.
+### 2. Native-First Workflow (Zero Docker)
+- All runtime checks, tests, and scripts must execute natively on the host. Do not introduce Docker or container wrappers.
 
-### 3. Environment & Credentials Security
-- `backend/.env` contains live, sensitive Supabase credentials. **It must NEVER be modified or deleted.**
-- When introducing new environment variables (such as `CORS_ORIGINS`, `PORT`, service keys), document them in `backend/.env.example`.
+### 3. Environment & Security Protection
+- `backend/.env` contains live Supabase credentials. **It must never be modified or deleted.**
+- Document new environment variables in `backend/.env.example`.
 
-### 4. Compilation, Quality & Validation
-- Always validate code before committing:
-  - Check Python syntax and types: `python -m py_compile <files>` or run test suites.
-  - Verify SQL migration syntax against PostgreSQL 15+ standards.
-  - Ensure zero unresolved linting/type errors.
+### 4. Compilation & Validation
+- Before declaring a task or milestone complete, always validate code:
+  ```powershell
+  .venv\Scripts\python -m compileall backend
+  ```
+- Ensure zero compilation errors and valid PostgreSQL syntax.
 
 ### 5. Git Commit and Push Discipline
-- Commit and push changes whenever a meaningful milestone or task is completed.
-- Write clear, concise, and structured commit messages (e.g. `feat(supabase): ...`, `fix(backend): ...`, `docs: ...`).
-- Verify `git status` before committing to avoid staging unintended or untracked sensitive files (`.env` must remain ignored).
-- Push cleanly to the active branch (`origin/main`).
+- Commit code with atomic, descriptive messages (`feat(...)`, `fix(...)`, `docs(...)`).
+- Push to remote `origin/main` to keep progress safely synchronized:
+  ```powershell
+  git add -A
+  git commit -m "feat(...): ..."
+  git push origin main
+  ```
