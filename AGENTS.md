@@ -30,6 +30,12 @@ This repository contains the backend and database architecture for the Autocert 
   - Master template is the cleaned, high-resolution PNG asset (`Black Gold Formal Appreciation Certificate.png`) with sample text permanently wiped. Static PDF templates without editable fields/placeholders are strictly discontinued.
 - **Decoupled Output Generation (Mutually Exclusive)**:
   - Formats are generated strictly separately per run (`--format png` generates all PNG images; `--format pdf` compiles directly into printable PDFs from the master image). Output folders are automatically cleaned before batch generation to eliminate mixed artifacts.
+- **Dataset Field Isolation & Normalization**:
+  - `normalize_participant()` extracts strictly display-required fields (`full_name`, `achievement_text`, `issue_date`, `signer_name`, etc.) and completely isolates sensitive participant PII (`email`, `phone`, `date_of_birth`, `city`, `country`, `linkedin`, internal IDs) from rendering.
+  - Template manifests strictly declare required fields; engine never exposes raw dataset columns.
+- **White Green Abstract Geometric Template Verified**:
+  - All 30 mock participants generated successfully in both PNG and PDF modes.
+  - Manifest calibrated with proportional coordinates: `full_name` centered at `y_pct=0.438` sitting elegantly above the decorative line, `achievement_text` wrapped at `y_pct=0.575`, `issue_date` at `y_pct=0.678`.
 - **Dependencies & Environments**: Pinned exact versions in `backend/requirements.txt`, installed and validated inside `.venv`.
 - **Protected Main Branch**: GitHub branch protection active on `main`; all updates are merged via pull requests.
 
