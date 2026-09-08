@@ -41,15 +41,26 @@ class PillowImageEngine:
             if not text_str:
                 continue
 
-            if field_name == "recipient_name":
-                # Ensure recipient slot is completely clear of any pre-existing template text
+            if config.clear_area and config.clear_bg_color:
+                x1 = int(canvas_w * config.clear_area[0])
+                y1 = int(canvas_h * config.clear_area[1])
+                x2 = int(canvas_w * config.clear_area[2])
+                y2 = int(canvas_h * config.clear_area[3])
+                draw.rectangle([(x1, y1), (x2, y2)], fill=config.clear_bg_color)
+            elif field_name == "recipient_name":
+                # Default safety wipe for recipient slot scaled dynamically
                 draw.rectangle(
                     [(int(canvas_w * 0.20), int(canvas_h * 0.38)), (int(canvas_w * 0.80), int(canvas_h * 0.505))],
                     fill=(255, 255, 255)
                 )
 
             max_width = int(canvas_w * config.max_w_pct)
-            target_size = max(config.min_font_size, int(canvas_h * config.font_size_pct))
+            target_size = max(10, int(canvas_h * config.font_size_pct))
+            min_size = (
+                max(8, int(canvas_h * config.min_font_size_pct))
+                if getattr(config, "min_font_size_pct", None)
+                else config.min_font_size
+            )
 
             # Handle multi-line vs single-line
             if len(text_str) > 70 or "\n" in text_str or config.font_size_pct <= 0.035:
@@ -82,7 +93,7 @@ class PillowImageEngine:
                     font_family=config.font_family,
                     target_size=target_size,
                     max_width=max_width,
-                    min_size=config.min_font_size
+                    min_size=min_size
                 )
 
                 if config.align == "center":
