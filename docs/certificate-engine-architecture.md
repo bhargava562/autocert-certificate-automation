@@ -205,6 +205,14 @@ sequenceDiagram
     Engine-->>Client: RenderResult(bytes, filename, mime_type)
 ```
 
+### 3.1 Dynamic Resolution & Aspect-Ratio Independence
+
+The certificate automation module operates with **zero fixed dimensions**:
+- **Arbitrary Template Sizes**: Whether a template is uploaded as 720p (1280x720), 1080p (1920x1080), 2000x1414, 4K UHD (3840x2160), or A4 / Letter 300+ DPI print resolution, the layout engine adjusts automatically.
+- **Proportional Metrics**: All layout coordinates (`x_pct`, `y_pct`), bounding box constraints (`max_w_pct`), target font sizes (`font_size_pct`), and minimum scaling limits (`min_font_size_pct`) are defined strictly as relative ratios (0.0 to 1.0) of the actual template's dimensions.
+- **Adaptive Step Sizing**: Font auto-fitting employs adaptive step calculations (`max(1, int(target_size * 0.025))`) rather than static pixel decrements, preventing performance degradation on high-DPI templates while maintaining typography precision.
+- **Defensive Area Clearing**: Dynamic masks (`clear_area` percentages) allow automated clearing of pre-existing placeholder slots on templates of any dimension.
+
 ---
 
 ## 4. End-to-End Batch Generation Flow
