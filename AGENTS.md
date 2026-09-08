@@ -36,6 +36,11 @@ This repository contains the backend and database architecture for the Autocert 
 - **White Green Abstract Geometric Template Verified**:
   - All 30 mock participants generated successfully in both PNG and PDF modes.
   - Manifest calibrated with proportional coordinates: `full_name` centered at `y_pct=0.438` sitting elegantly above the decorative line, `achievement_text` wrapped at `y_pct=0.575`, `issue_date` at `y_pct=0.678`.
+- **HTML Email Template & Multi-Recipient Distinct Dispatch Verified**:
+  - Responsive HTML email template created at `backend/sample_templates/sample_email_template.html` with Jinja2 placeholder variables.
+  - Distinct certificate dispatch engine implemented in `backend/test_email_dispatch.py` and verified live via Gmail SMTP (STARTTLS, port 587).
+  - Verified 1-to-1 dispatch: each recipient receives their distinct personalized certificate PDF attachment and unique participant data.
+  - Centralized SMTP settings configured in `app/core/config.py` and documented in `backend/.env.example`.
 - **Dependencies & Environments**: Pinned exact versions in `backend/requirements.txt`, installed and validated inside `.venv`.
 - **Protected Main Branch**: GitHub branch protection active on `main`; all updates are merged via pull requests.
 

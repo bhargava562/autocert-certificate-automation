@@ -17,6 +17,12 @@ class Settings:
     environment: str = "development"
     port: int = 8000
     host: str = "0.0.0.0"
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from_name: str = "Autocert Certificates"
+    smtp_from_email: Optional[str] = None
 
 def load_settings(env_path: Optional[str] = None) -> Settings:
     if env_path is None:
@@ -32,6 +38,7 @@ def load_settings(env_path: Optional[str] = None) -> Settings:
                     k, v = line.split("=", 1)
                     env[k.strip()] = v.strip()
 
+    smtp_user = env.get("SMTP_USER") or os.getenv("SMTP_USER")
     return Settings(
         supabase_url=env.get("SUPABASE_URL") or os.getenv("SUPABASE_URL"),
         supabase_publishable_key=env.get("SUPABASE_PUBLISHABLE_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY"),
@@ -41,4 +48,10 @@ def load_settings(env_path: Optional[str] = None) -> Settings:
         environment=env.get("ENVIRONMENT", "development"),
         port=int(env.get("PORT", 8000)),
         host=env.get("HOST", "0.0.0.0"),
+        smtp_host=env.get("SMTP_HOST") or os.getenv("SMTP_HOST", "smtp.gmail.com"),
+        smtp_port=int(env.get("SMTP_PORT") or os.getenv("SMTP_PORT", 587)),
+        smtp_user=smtp_user,
+        smtp_password=env.get("SMTP_PASSWORD") or os.getenv("SMTP_PASSWORD"),
+        smtp_from_name=env.get("SMTP_FROM_NAME") or os.getenv("SMTP_FROM_NAME", "Autocert Certificates"),
+        smtp_from_email=env.get("SMTP_FROM_EMAIL") or os.getenv("SMTP_FROM_EMAIL") or smtp_user,
     )
