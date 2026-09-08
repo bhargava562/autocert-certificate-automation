@@ -58,8 +58,8 @@ def build_manifest(template_filename: str, output_format: str = "png") -> Templa
                     min_font_size_pct=0.022,
                     align="center",
                     color="#1A5C47",
-                    clear_area=None,
-                    clear_bg_color=None
+                    clear_area=(0.15, 0.385, 0.85, 0.4855),
+                    clear_bg_color="#F9F9F9"
                 ),
                 "achievement_text": FieldConfig(
                     name="achievement_text",
@@ -72,8 +72,8 @@ def build_manifest(template_filename: str, output_format: str = "png") -> Templa
                     align="center",
                     color="#2D2D2D",
                     line_spacing=1.45,
-                    clear_area=None,
-                    clear_bg_color=None
+                    clear_area=(0.15, 0.492, 0.85, 0.635),
+                    clear_bg_color="#F9F9F9"
                 ),
                 "issue_date": FieldConfig(
                     name="issue_date",
@@ -85,8 +85,8 @@ def build_manifest(template_filename: str, output_format: str = "png") -> Templa
                     min_font_size_pct=0.013,
                     align="center",
                     color="#444444",
-                    clear_area=None,
-                    clear_bg_color=None
+                    clear_area=(0.25, 0.640, 0.75, 0.715),
+                    clear_bg_color="#F9F9F9"
                 ),
             }
         )
