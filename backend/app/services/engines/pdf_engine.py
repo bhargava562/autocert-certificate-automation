@@ -6,7 +6,7 @@ relative bounding boxes, and crisp vector font injection.
 
 import io
 from typing import Dict, Any
-import fitz  # PyMuPDF
+import pymupdf as fitz
 from ..protocols import CertificateEngine
 from ..models import TemplateManifest, RenderResult
 

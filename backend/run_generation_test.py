@@ -25,14 +25,14 @@ from app.services.providers.local_provider import LocalTemplateProvider, LocalDi
 from app.services.providers.supabase_provider import SupabaseTemplateProvider, SupabaseStorageSink
 from app.services.pipeline import CertificatePipeline
 
-def build_manifest(template_filename: str) -> TemplateManifest:
+def build_manifest(output_format: str = "png") -> TemplateManifest:
     """Creates a normalized layout manifest matching the Black Gold Appreciation Certificate"""
-    is_pdf = template_filename.lower().endswith(".pdf")
+    normalized_format = "pdf" if output_format.lower() == "pdf" else "png"
 
     manifest = TemplateManifest(
         template_id="black_gold_appreciation",
-        template_filename=template_filename,
-        default_format="pdf" if is_pdf else "png",
+        template_filename="Black Gold Formal Appreciation Certificate.png",
+        default_format=normalized_format,
         base_width=2000,
         base_height=1414,
         fields={
@@ -52,7 +52,7 @@ def build_manifest(template_filename: str) -> TemplateManifest:
     )
     return manifest
 
-def run_pipeline(mode: str = "local", format_type: str = "png"):
+def run_pipeline(mode: str = "local", format_type: str = "png", clean: bool = True):
     settings = load_settings()
     templates_dir = os.path.join(backend_dir, "sample_templates")
     mock_data_path = os.path.join(backend_dir, "sample_data", "mock_participants.json")
@@ -61,20 +61,18 @@ def run_pipeline(mode: str = "local", format_type: str = "png"):
     with open(mock_data_path, "r", encoding="utf-8") as f:
         participants = json.load(f)
 
-    filename_target = (
-        "Black Gold Formal Appreciation Certificate.pdf"
-        if format_type == "pdf"
-        else "Black Gold Formal Appreciation Certificate.png"
-    )
-
-    manifest = build_manifest(filename_target)
+    # Master template is always the PNG asset (PDF template lacks placeholders)
+    filename_target = "Black Gold Formal Appreciation Certificate.png"
+    manifest = build_manifest(output_format=format_type)
     text_service = TextFittingService()
     engine_factory = CertificateEngineFactory(text_service)
 
+    resolved_format = manifest.default_format.upper()
     print("=" * 70)
-    print(f"AUTOCERT GENERATION PIPELINE — Mode: {mode.upper()} | Format: {format_type.upper()}")
+    print(f"AUTOCERT GENERATION PIPELINE — Mode: {mode.upper()} | Output Format: {resolved_format}")
     print("=" * 70)
-    print(f"Template Target: {filename_target}")
+    print(f"Master Template: {filename_target}")
+    print(f"Output Type: All {'PDF Documents' if resolved_format == 'PDF' else 'PNG Images'} (Separate Generation)")
     print(f"Participants Count: {len(participants)}")
     for i, p in enumerate(participants, 1):
         print(f"  {i}. {p['recipient_name']} ({p['certificate_id']})")
@@ -82,6 +80,15 @@ def run_pipeline(mode: str = "local", format_type: str = "png"):
 
     if mode == "local":
         output_dir = os.path.join(templates_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        if clean:
+            # Clean output directory so outputs of different formats are never mixed
+            for f in os.listdir(output_dir):
+                fp = os.path.join(output_dir, f)
+                if os.path.isfile(fp):
+                    os.remove(fp)
+            print(f"Cleaned output directory: {output_dir}")
+
         provider = LocalTemplateProvider(templates_dir)
         sink = LocalDiskSink(output_dir)
         print(f"Source Folder: {templates_dir}")
@@ -101,7 +108,7 @@ def run_pipeline(mode: str = "local", format_type: str = "png"):
         storage_sink=sink
     )
 
-    print("\nExecuting batch certificate generation...")
+    print(f"\nExecuting batch certificate generation (Format: {resolved_format})...")
     results = pipeline.generate_batch(
         template_id=filename_target,
         participants=participants,
@@ -125,12 +132,18 @@ def main():
     )
     parser.add_argument(
         "--format",
-        choices=["png", "pdf"],
+        choices=["png", "image", "pdf"],
         default="png",
-        help="Template format to test: png or pdf"
+        help="Target output format: 'png'/'image' (generates all images) or 'pdf' (generates all PDFs)"
+    )
+    parser.add_argument(
+        "--no-clean",
+        action="store_true",
+        help="Do not clean output folder prior to batch generation"
     )
     args = parser.parse_args()
-    run_pipeline(mode=args.mode, format_type=args.format)
+    chosen_fmt = "png" if args.format in ("png", "image") else "pdf"
+    run_pipeline(mode=args.mode, format_type=chosen_fmt, clean=not args.no_clean)
 
 if __name__ == "__main__":
     main()
