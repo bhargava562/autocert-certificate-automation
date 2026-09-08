@@ -31,6 +31,9 @@ class PyMuPdfEngine:
         for field_name, config in manifest.fields.items():
             val = fields.get(field_name)
             if val is None:
+                if field_name in ("recipient_name", "name", "full_name"):
+                    val = fields.get("full_name") or fields.get("recipient_name") or fields.get("name")
+            if val is None:
                 continue
             text_str = str(val).strip()
             if not text_str:
@@ -108,7 +111,7 @@ class PyMuPdfEngine:
         doc.close()
 
         cert_id = fields.get("certificate_id", "cert")
-        safe_name = fields.get("recipient_name", "recipient").replace(" ", "_")
+        safe_name = (fields.get("full_name") or fields.get("recipient_name") or "recipient").replace(" ", "_")
         filename = f"{cert_id}_{safe_name}.pdf"
 
         return RenderResult(
