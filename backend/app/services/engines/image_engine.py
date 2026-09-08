@@ -41,6 +41,13 @@ class PillowImageEngine:
             if not text_str:
                 continue
 
+            if field_name == "recipient_name":
+                # Ensure recipient slot is completely clear of any pre-existing template text
+                draw.rectangle(
+                    [(int(canvas_w * 0.20), int(canvas_h * 0.38)), (int(canvas_w * 0.80), int(canvas_h * 0.505))],
+                    fill=(255, 255, 255)
+                )
+
             max_width = int(canvas_w * config.max_w_pct)
             target_size = max(config.min_font_size, int(canvas_h * config.font_size_pct))
 
