@@ -43,10 +43,12 @@ def build_manifest(output_format: str = "png") -> TemplateManifest:
                 max_w_pct=0.65,
                 font_family="script",
                 font_size_pct=0.065,
-                min_font_size=22,
+                min_font_size_pct=0.018,
                 align="center",
                 color="#C5A059",
-                anchor_phrase="THIS CERTIFICATE IS PRESENTED TO"
+                anchor_phrase="THIS CERTIFICATE IS PRESENTED TO",
+                clear_area=(0.20, 0.38, 0.80, 0.505),
+                clear_bg_color="#FFFFFF"
             )
         }
     )

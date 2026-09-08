@@ -7,20 +7,22 @@ Autocert is a plug-in certificate automation module built for an external parent
 ### 1. Current State of Repository
 - **Database Architecture (9 Core Tables)**: Codified in `backend/supabase/migrations/`:
   - `data_sources`, `batches`, `batch_progress`, `participants`, `generation_tasks`, `certificates`, `delivery_tasks`, `deliveries`, `previews`.
-- **Supabase Storage**: Active buckets `certificates` (10MB) and `templates` (25MB) provisioned and verified.
-- **SOLID Modular Certificate Engine (`backend/app/`)**:
-  - `TemplateProvider` Protocol (`LocalTemplateProvider`, `SupabaseTemplateProvider`).
-  - `CertificateEngine` Protocol (`PillowImageEngine`, `PyMuPdfEngine`, `DocxTemplateEngine`).
-  - `CertificateEngineFactory` (resolves engine dynamically by file extension).
-  - `TextFittingService` (dynamic auto-scaling, horizontal centering, word wrapping — eliminates random X/Y coordinates).
-  - `StorageSink` Protocol (`LocalDiskSink`, `SupabaseStorageSink`).
-  - `CertificatePipeline` (Dependency-injected orchestrator).
+- **Supabase Storage**: Active buckets `certificates` (10MB) and `templates` (25MB) provisioned and verified via `init_storage.py`.
+- **Dynamic Dimension & Resolution-Independent Engine**:
+  - **Zero Fixed Dimensions**: Certificates are never bound to static pixel dimensions or aspect ratios. The module dynamically adapts to any resolution (720p, 1080p, 2000x1414, 4K, 300+ DPI print) and aspect ratio (Landscape, Portrait, Square).
+  - **Proportional Coordinates & Scaling**: All positions (`x_pct`, `y_pct`), widths (`max_w_pct`), target font sizes (`font_size_pct`), and dynamic downscaling limits (`min_font_size_pct`) are proportional relative metrics (0.0 to 1.0).
+  - **Adaptive Step Sizing**: `TextFittingService.fit_text_to_width` scales dynamically with canvas height and uses an adaptive step size (`max(1, int(target_size * 0.025))`) to avoid performance bottlenecks on massive ultra-HD canvases.
+  - **Defensive Area Clearing**: Manifest-configured `clear_area` and `clear_bg_color` wipe placeholder slots dynamically to guarantee zero text ghosting across any background.
+- **Master PNG Asset Pipeline (Zero Static PDF Dependency)**:
+  - Master template is the cleaned, high-resolution PNG asset (`Black Gold Formal Appreciation Certificate.png`) with sample text permanently wiped. Static PDF templates without editable fields/placeholders are strictly discontinued.
+- **Decoupled Output Generation (Mutually Exclusive)**:
+  - Formats are generated strictly separately per run (`--format png` generates all PNG images; `--format pdf` compiles directly into printable PDFs from the master image). Output folders are automatically cleaned before batch generation to eliminate mixed artifacts.
 - **Execution Modes**:
   - **Local Mode**: Reads from `backend/sample_templates/` and outputs directly to `backend/sample_templates/output/`.
   - **Cloud Mode**: Reads from Supabase `templates` bucket and uploads to `certificates` bucket with signed URLs.
 - **Mock Dataset**: 5 diverse participants in `backend/sample_data/mock_participants.json`.
-- **Dependencies**: Pinned exact versions in `backend/requirements.txt`.
-- **Standby State**: Awaiting user instruction to execute the test runner (`backend/run_generation_test.py`).
+- **Dependencies & Environments**: Pinned exact versions in `backend/requirements.txt`, verified inside `.venv`.
+- **Protected Main Branch**: GitHub branch protection active on `main`; all updates are merged via pull requests.
 
 ---
 
