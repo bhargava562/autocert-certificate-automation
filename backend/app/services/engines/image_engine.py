@@ -36,6 +36,15 @@ class PillowImageEngine:
         for field_name, config in manifest.fields.items():
             val = fields.get(field_name)
             if val is None:
+                # Check known synonym mappings for template flexibility
+                if field_name in ("recipient_name", "name"):
+                    val = fields.get("recipient_name") or fields.get("name")
+                elif field_name in ("role", "achievement_title", "title"):
+                    val = fields.get("role") or fields.get("achievement_title") or fields.get("title")
+                elif field_name in ("date", "issue_date"):
+                    val = fields.get("issue_date") or fields.get("date")
+
+            if val is None:
                 continue
             text_str = str(val).strip()
             if not text_str:
@@ -47,7 +56,7 @@ class PillowImageEngine:
                 x2 = int(canvas_w * config.clear_area[2])
                 y2 = int(canvas_h * config.clear_area[3])
                 draw.rectangle([(x1, y1), (x2, y2)], fill=config.clear_bg_color)
-            elif field_name == "recipient_name":
+            elif field_name in ("recipient_name", "name"):
                 # Default safety wipe for recipient slot scaled dynamically
                 draw.rectangle(
                     [(int(canvas_w * 0.20), int(canvas_h * 0.38)), (int(canvas_w * 0.80), int(canvas_h * 0.505))],
