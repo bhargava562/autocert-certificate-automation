@@ -24,6 +24,7 @@ env/
 *.sqlite3
 *.db
 alembic/versions/__pycache__/
+backend/sample_templates/output/
 
 # JavaScript / frontend artifacts
 node_modules/
