@@ -36,20 +36,45 @@ class PillowImageEngine:
         for field_name, config in manifest.fields.items():
             val = fields.get(field_name)
             if val is None:
+                # Check known synonym mappings for template flexibility
+                if field_name in ("recipient_name", "name", "full_name"):
+                    val = fields.get("full_name") or fields.get("recipient_name") or fields.get("name")
+                elif field_name in ("event_name", "eventname"):
+                    val = fields.get("event_name") or fields.get("eventname") or fields.get("achievement_title")
+                elif field_name in ("description", "achievement_text"):
+                    val = fields.get("achievement_text") or fields.get("description")
+                    if not val and fields.get("event_name"):
+                        pronoun = "Her" if str(fields.get("gender", "")).lower() == "female" else "His"
+                        date_str = fields.get("participated_date") or fields.get("issue_date", "")
+                        val = f"has successfully completed {fields.get('event_name')} conducted on {date_str}.\n{pronoun} dedication and commitment to the learning process are truly commendable."
+                elif field_name in ("awarded_date", "award_date"):
+                    issue_dt = fields.get("issue_date") or fields.get("participated_date", "")
+                    val = f"Awarded on {issue_dt}" if issue_dt else None
+                elif field_name in ("role", "achievement_title", "title"):
+                    val = fields.get("role") or fields.get("achievement_title") or fields.get("title")
+                elif field_name in ("date", "issue_date"):
+                    val = fields.get("issue_date") or fields.get("date")
+
+            if val is None:
                 continue
             text_str = str(val).strip()
             if not text_str:
                 continue
 
-            if field_name == "recipient_name":
-                # Ensure recipient slot is completely clear of any pre-existing template text
-                draw.rectangle(
-                    [(int(canvas_w * 0.20), int(canvas_h * 0.38)), (int(canvas_w * 0.80), int(canvas_h * 0.505))],
-                    fill=(255, 255, 255)
-                )
+            if config.clear_area and config.clear_bg_color:
+                x1 = int(canvas_w * config.clear_area[0])
+                y1 = int(canvas_h * config.clear_area[1])
+                x2 = int(canvas_w * config.clear_area[2])
+                y2 = int(canvas_h * config.clear_area[3])
+                draw.rectangle([(x1, y1), (x2, y2)], fill=config.clear_bg_color)
 
             max_width = int(canvas_w * config.max_w_pct)
-            target_size = max(config.min_font_size, int(canvas_h * config.font_size_pct))
+            target_size = max(10, int(canvas_h * config.font_size_pct))
+            min_size = (
+                max(8, int(canvas_h * config.min_font_size_pct))
+                if getattr(config, "min_font_size_pct", None)
+                else config.min_font_size
+            )
 
             # Handle multi-line vs single-line
             if len(text_str) > 70 or "\n" in text_str or config.font_size_pct <= 0.035:
@@ -82,7 +107,7 @@ class PillowImageEngine:
                     font_family=config.font_family,
                     target_size=target_size,
                     max_width=max_width,
-                    min_size=config.min_font_size
+                    min_size=min_size
                 )
 
                 if config.align == "center":
@@ -99,7 +124,7 @@ class PillowImageEngine:
         out_buf = io.BytesIO()
         out_fmt = manifest.default_format.lower()
         cert_id = fields.get("certificate_id", "cert")
-        safe_name = fields.get("recipient_name", "recipient").replace(" ", "_")
+        safe_name = (fields.get("full_name") or fields.get("recipient_name") or "recipient").replace(" ", "_")
 
         if out_fmt == "pdf":
             img.save(out_buf, format="PDF", resolution=150.0)

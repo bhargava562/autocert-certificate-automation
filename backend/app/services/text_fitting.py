@@ -81,13 +81,14 @@ class TextFittingService:
         Returns: (fitted_font, actual_font_size, text_width)
         """
         current_size = target_size
+        step = max(1, int(target_size * 0.025))
         while current_size >= min_size:
             font = self.load_font(font_family, current_size)
             bbox = draw.textbbox((0, 0), text, font=font)
             text_width = bbox[2] - bbox[0]
-            if text_width <= max_width or current_size <= min_size:
+            if text_width <= max_width:
                 return font, current_size, text_width
-            current_size -= 2
+            current_size -= step
 
         font = self.load_font(font_family, min_size)
         bbox = draw.textbbox((0, 0), text, font=font)

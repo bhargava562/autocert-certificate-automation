@@ -10,24 +10,21 @@ Autocert is an isolated certificate automation module designed to plug into an e
   - Storage setup in `backend/supabase/migrations/20260907000002_storage_setup.sql`.
   - Storage buckets `certificates` (10MB limit) and `templates` (25MB limit) have been provisioned and are active on Supabase.
   - Migration runners: `backend/supabase/migrate.py` (Python) and `backend/supabase/migrate.js` (Node.js).
-- **SOLID Modular Certificate Generation Engine (`backend/app/`)**:
-  - `TemplateProvider` protocol with `LocalTemplateProvider` (folder-in) and `SupabaseTemplateProvider` (cloud storage).
-  - `CertificateEngine` protocol with:
-    - `PillowImageEngine`: Raster rendering with dynamic auto-scaling, horizontal centering, and script fonts.
-    - `PyMuPdfEngine`: Vector PDF search (`THIS CERTIFICATE IS PRESENTED TO`), dynamic bounding box, and vector text insertion.
-    - `DocxTemplateEngine`: Word DOCX templates with Jinja2 tags via `docxtpl`.
-  - `CertificateEngineFactory`: Resolves engines by file extension (`.png`, `.pdf`, `.docx`).
-  - `TextFittingService`: Measures bounding boxes, dynamically downsizes fonts for long names (no random X/Y), and computes true center.
-  - `StorageSink` protocol with `LocalDiskSink` (folder-out to `sample_templates/output/`) and `SupabaseStorageSink`.
-  - `CertificatePipeline`: Orchestrator coordinating generation via Dependency Injection.
-- **Test Assets & Mock Data**:
-  - Real template in `backend/sample_templates/`: `Black Gold Formal Appreciation Certificate.png` and `.pdf`.
-  - 5-member mock dataset in `backend/sample_data/mock_participants.json` (including standard, long, and hyphenated names).
-  - Test runner: `backend/run_generation_test.py` (`--mode local` and `--mode cloud`).
-- **Dependencies**:
-  - Pinned exact versions in `backend/requirements.txt`.
+- **Dynamic Dimension & Resolution-Independent Engine**:
+  - **Zero Fixed Dimensions**: Certificates are never bound to static pixel dimensions or aspect ratios. The module dynamically adapts to any resolution (720p, 1080p, 2000x1414, 4K, 300+ DPI print) and aspect ratio (Landscape, Portrait, Square).
+  - **Proportional Coordinates & Scaling**: All positions (`x_pct`, `y_pct`), widths (`max_w_pct`), target font sizes (`font_size_pct`), and dynamic downscaling limits (`min_font_size_pct`) are proportional relative metrics (0.0 to 1.0).
+  - **Adaptive Step Sizing**: `TextFittingService.fit_text_to_width` scales dynamically with canvas height and uses an adaptive step size (`max(1, int(target_size * 0.025))`) to avoid performance bottlenecks on massive ultra-HD canvases.
+  - **Defensive Area Clearing**: Manifest-configured `clear_area` and `clear_bg_color` wipe placeholder slots dynamically to guarantee zero text ghosting across any background.
+- **Master PNG Asset Pipeline (Zero Static PDF Dependency)**:
+  - Master template is the cleaned, high-resolution PNG asset (`Black Gold Formal Appreciation Certificate.png`) with sample text permanently wiped. Static PDF templates without editable fields/placeholders are strictly discontinued.
+- **Decoupled Output Generation (Mutually Exclusive)**:
+  - Formats are generated strictly separately per run (`--format png` generates all PNG images; `--format pdf` compiles directly into printable PDFs from the master image). Output folders are automatically cleaned before batch generation to eliminate mixed artifacts.
+- **Dependencies & Environments**:
+  - Pinned exact versions in `backend/requirements.txt`, verified inside `.venv`.
+- **Protected Main Branch**:
+  - GitHub branch protection active on `main`; all updates are merged via pull requests.
 - **Next Action on Standby**:
-  - Awaiting user instruction to trigger the generation test.
+  - Ready for API service endpoints or database batch dispatch execution.
 
 ---
 
