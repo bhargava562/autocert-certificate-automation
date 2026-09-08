@@ -61,12 +61,33 @@ class PillowImageEngine:
             if not text_str:
                 continue
 
-            if config.clear_area and config.clear_bg_color:
+            if config.clear_area:
                 x1 = int(canvas_w * config.clear_area[0])
                 y1 = int(canvas_h * config.clear_area[1])
                 x2 = int(canvas_w * config.clear_area[2])
                 y2 = int(canvas_h * config.clear_area[3])
-                draw.rectangle([(x1, y1), (x2, y2)], fill=config.clear_bg_color)
+
+                # Determine background fill color
+                fill_color = config.clear_bg_color
+                if not fill_color or str(fill_color).lower() == "auto":
+                    sample_x = min(canvas_w - 1, max(0, x1 + 5))
+                    sample_y = min(canvas_h - 1, max(0, y1 + 5))
+                    fill_color = img.getpixel((sample_x, sample_y))
+
+                draw.rectangle([(x1, y1), (x2, y2)], fill=fill_color)
+
+                # Defensive line repair for white-green certificate if {{name}} overlapped the line
+                t_id = getattr(manifest, "template_id", "").lower()
+                t_fn = getattr(manifest, "template_filename", "").lower()
+                if ("white" in t_id or "green" in t_id or "completion" in t_id or
+                    "white" in t_fn or "green" in t_fn or "completion" in t_fn):
+                    line_y = int(canvas_h * 0.488)
+                    line_w = max(1, int(canvas_h * 0.0035))
+                    draw.line(
+                        [(int(canvas_w * 0.35), line_y), (int(canvas_w * 0.65), line_y)],
+                        fill=(28, 105, 84),
+                        width=line_w
+                    )
 
             max_width = int(canvas_w * config.max_w_pct)
             target_size = max(10, int(canvas_h * config.font_size_pct))
