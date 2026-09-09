@@ -19,12 +19,24 @@ Autocert is an isolated certificate automation module designed to plug into an e
   - Master template is the cleaned, high-resolution PNG asset (`Black Gold Formal Appreciation Certificate.png`) with sample text permanently wiped. Static PDF templates without editable fields/placeholders are strictly discontinued.
 - **Decoupled Output Generation (Mutually Exclusive)**:
   - Formats are generated strictly separately per run (`--format png` generates all PNG images; `--format pdf` compiles directly into printable PDFs from the master image). Output folders are automatically cleaned before batch generation to eliminate mixed artifacts.
+- **Frontend Dashboard Integration (React + Vite)**:
+  - Starting screen features an operational dashboard with system overview metric cards (Certificates Generated, Emails Dispatched, Template Engine formats, Data Ingestion formats).
+  - Prominent "Generate Certificate" toggle opens the unified 3-step workflow:
+    1. **Asset Upload**: Supports template uploads in Image (`.png`, `.jpg`, `.jpeg`) or Vector PDF (`.pdf`), and participant datasets in CSV, JSON, and Excel (`.xlsx`, `.xls`).
+    2. **Field Mapping & Validation**: Auto-matches uploaded columns to system fields (`full_name`, `certificate_id`, `email`, etc.). Real-time client validation checks for duplicates, missing required fields, and email mapping.
+    3. **Bulk Email Dispatch Configuration**: Toggle for automatic Gmail SMTP dispatch upon generation, customizable email subject line, and anti-throttle pacing.
+  - Interactive certificate inspection with high-res PNG download, fullscreen zoom, and 1-click individual email sending/resending with status indicators (`Email Sent`, `Email Failed`, `Email Not Sent`).
+- **Multi-Format Ingestion & Parallel Rendering Engine (FastAPI Backend)**:
+  - Vector PDF templates converted to raster image bytes in-memory via PyMuPDF (`fitz`).
+  - Concurrent batch certificate generation using `ThreadPoolExecutor(max_workers=min(16, os.cpu_count() + 4))` for instantaneous throughput.
+  - Paced SMTP STARTTLS connection session (0.15s pacing) preventing Gmail socket throttling with per-recipient error isolation.
+  - Dynamic API endpoints: `POST /api/certificates/generate`, `POST /api/certificates/send-batch-emails`, `POST /api/certificates/send-single-email`, `POST /api/certificates/test-smtp`, and `GET /api/certificates/download/{filename}`.
 - **Dependencies & Environments**:
-  - Pinned exact versions in `backend/requirements.txt`, verified inside `.venv`.
+  - Pinned exact versions in `backend/requirements.txt` (including `python-multipart==0.0.32`), verified inside `.venv`.
 - **Protected Main Branch**:
-  - GitHub branch protection active on `main`; all updates are merged via pull requests.
+  - GitHub branch protection active on `main`; all updates are merged cleanly.
 - **Next Action on Standby**:
-  - Ready for API service endpoints or database batch dispatch execution.
+  - Ready for end-to-end production runs or Supabase DB persistence integration.
 
 ---
 

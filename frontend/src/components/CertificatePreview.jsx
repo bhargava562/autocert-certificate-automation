@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Download, ZoomIn, X, Mail, ShieldCheck, Loader2 } from 'lucide-react';
+import { Download, ZoomIn, X, Mail, Send, Loader2, RefreshCw, AlertCircle } from 'lucide-react';
 import { getCertificateImageUrl } from '../services/certificateApi';
 
-export default function CertificatePreview({ certificate }) {
+export default function CertificatePreview({ certificate, onResendEmail }) {
   const [isZoomed, setIsZoomed] = useState(false);
   const [isImageLoading, setIsImageLoading] = useState(true);
+  const [isSending, setIsSending] = useState(false);
 
   if (!certificate) {
     return (
@@ -25,12 +26,24 @@ export default function CertificatePreview({ certificate }) {
     document.body.removeChild(link);
   };
 
+  const handleEmailAction = async () => {
+    if (!onResendEmail || isSending || !certificate.email) return;
+    setIsSending(true);
+    try {
+      await onResendEmail(certificate);
+    } catch {
+      // Error handled in hook
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   return (
     <div className="preview-card">
       <div className="preview-toolbar">
         <div className="preview-participant-info">
           <h3>{certificate.participant_name}</h3>
-          <p style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '3px' }}>
+          <p style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '3px', flexWrap: 'wrap' }}>
             {certificate.email && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                 <Mail size={12} /> {certificate.email}
@@ -40,10 +53,41 @@ export default function CertificatePreview({ certificate }) {
             <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
               ID: {certificate.certificate_id}
             </span>
+            {certificate.email_status && (
+              <>
+                <span>•</span>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: certificate.email_status === 'Sent' ? '#10b981' : certificate.email_status.startsWith('Failed') ? '#f87171' : 'var(--text-secondary)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  {certificate.email_status === 'Sent' ? <Send size={11} /> : null}
+                  {certificate.email_status}
+                </span>
+              </>
+            )}
           </p>
         </div>
 
         <div className="preview-actions">
+          {certificate.email && onResendEmail && (
+            <button
+              type="button"
+              disabled={isSending}
+              className="btn-secondary btn-sm"
+              onClick={handleEmailAction}
+              title={certificate.email_status === 'Sent' ? 'Resend certificate via Gmail SMTP' : 'Send certificate via Gmail SMTP'}
+            >
+              <RefreshCw size={14} className={isSending ? 'animate-spin' : ''} />
+              <span>{isSending ? 'Sending...' : certificate.email_status === 'Sent' ? 'Resend Email' : 'Send Email'}</span>
+            </button>
+          )}
+
           <button
             type="button"
             className="btn-secondary btn-sm"
