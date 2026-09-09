@@ -17,12 +17,20 @@ Autocert is a plug-in certificate automation module built for an external parent
   - Master template is the cleaned, high-resolution PNG asset (`Black Gold Formal Appreciation Certificate.png`) with sample text permanently wiped. Static PDF templates without editable fields/placeholders are strictly discontinued.
 - **Decoupled Output Generation (Mutually Exclusive)**:
   - Formats are generated strictly separately per run (`--format png` generates all PNG images; `--format pdf` compiles directly into printable PDFs from the master image). Output folders are automatically cleaned before batch generation to eliminate mixed artifacts.
-- **Execution Modes**:
-  - **Local Mode**: Reads from `backend/sample_templates/` and outputs directly to `backend/sample_templates/output/`.
-  - **Cloud Mode**: Reads from Supabase `templates` bucket and uploads to `certificates` bucket with signed URLs.
-- **Mock Dataset**: 5 diverse participants in `backend/sample_data/mock_participants.json`.
-- **Dependencies & Environments**: Pinned exact versions in `backend/requirements.txt`, verified inside `.venv`.
-- **Protected Main Branch**: GitHub branch protection active on `main`; all updates are merged via pull requests.
+- **Frontend Dashboard Integration (React + Vite)**:
+  - Operational dashboard view as starting screen with system overview metric cards (Certificates Generated, Emails Dispatched, Template Engine formats, Data Ingestion formats).
+  - Unified 3-step generation workflow modal:
+    - **Asset Upload**: Supports Image (`.png`, `.jpg`, `.jpeg`) or Vector PDF (`.pdf`), and participant datasets in CSV, JSON, and Excel (`.xlsx`, `.xls`).
+    - **Data Mapping**: Auto-matches uploaded dataset columns to system fields (`full_name`, `certificate_id`, `email`, etc.).
+    - **Bulk Email Dispatching**: Option to automatically dispatch distinct personalized certificates with attachments via Gmail SMTP STARTTLS (0.15s pacing, error isolation per recipient).
+  - Split-view participant list and live certificate preview with fullscreen zoom, PNG download, and 1-click individual email sending/resending with status indicators (`Email Sent`, `Email Failed`, `Email Not Sent`).
+- **Multi-Format Ingestion & Parallel Rendering Engine (FastAPI Backend)**:
+  - Vector PDF templates converted to raster image bytes in-memory via PyMuPDF (`fitz`).
+  - Concurrent batch certificate generation using `ThreadPoolExecutor(max_workers=min(16, os.cpu_count() + 4))` for instantaneous throughput.
+  - Paced SMTP STARTTLS connection session (0.15s pacing) preventing Gmail socket throttling with per-recipient error isolation.
+  - Endpoints: `POST /api/certificates/generate`, `POST /api/certificates/send-batch-emails`, `POST /api/certificates/send-single-email`, `POST /api/certificates/test-smtp`, and `GET /api/certificates/download/{filename}`.
+- **Dependencies & Environments**: Pinned exact versions in `backend/requirements.txt` (including `python-multipart==0.0.32`), verified inside `.venv`.
+- **Protected Main Branch**: GitHub branch protection active on `main`; all updates are merged cleanly.
 
 ---
 

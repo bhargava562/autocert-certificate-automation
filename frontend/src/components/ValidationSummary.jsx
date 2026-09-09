@@ -2,7 +2,7 @@ import React, { useMemo, useEffect } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
 import { SYSTEM_FIELDS } from './DataMapping';
 
-export default function ValidationSummary({ records = [], mapping = {}, onValidationChange }) {
+export default function ValidationSummary({ records = [], mapping = {}, sendEmails = false, onValidationChange }) {
   const validationResult = useMemo(() => {
     if (!records || records.length === 0) {
       return {
@@ -26,6 +26,9 @@ export default function ValidationSummary({ records = [], mapping = {}, onValida
     }
     if (!idCol) {
       blockingErrors.push('Certificate ID column is not mapped.');
+    }
+    if (sendEmails && !emailCol) {
+      blockingErrors.push('Recipient Email column must be mapped to dispatch emails via Gmail SMTP.');
     }
 
     let validCount = 0;

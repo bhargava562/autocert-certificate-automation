@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { generateCertificatesApi } from '../services/certificateApi';
+import { generateCertificatesApi, sendSingleEmailApi } from '../services/certificateApi';
 import { SYSTEM_FIELDS } from '../components/DataMapping';
 
 export function useCertificateGeneration() {
@@ -7,6 +7,11 @@ export function useCertificateGeneration() {
   const [uploadedData, setUploadedData] = useState(null);
   const [mapping, setMapping] = useState({});
   const [validation, setValidation] = useState({ isValid: false, blockingErrors: [] });
+
+  // Email delivery options
+  const [sendEmails, setSendEmails] = useState(false);
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailStats, setEmailStats] = useState({ sent: 0, failed: 0 });
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState('');
@@ -71,12 +76,18 @@ export function useCertificateGeneration() {
         return item;
       });
 
-      setGenerationProgress(`Generating ${mappedParticipants.length} certificate(s) via backend engine...`);
+      setGenerationProgress(
+        sendEmails
+          ? `Generating ${mappedParticipants.length} certificate(s) & dispatching emails via Gmail SMTP...`
+          : `Generating ${mappedParticipants.length} certificate(s) via backend engine...`
+      );
 
       const response = await generateCertificatesApi({
         templateFile,
         participants: mappedParticipants,
         format: 'png',
+        sendEmails,
+        emailSubject: emailSubject || undefined,
       });
 
       if (!response || !response.certificates || response.certificates.length === 0) {
@@ -85,6 +96,10 @@ export function useCertificateGeneration() {
 
       setGeneratedCertificates(response.certificates);
       setSelectedCertificate(response.certificates[0]);
+      setEmailStats({
+        sent: response.emails_sent_count || 0,
+        failed: response.emails_failed_count || 0,
+      });
       setIsGenerating(false);
       setGenerationProgress('');
     } catch (err) {
@@ -92,7 +107,52 @@ export function useCertificateGeneration() {
       setGenerationProgress('');
       setGenerationError(err.message || 'Certificate generation failed. Please check your uploaded data and try again.');
     }
-  }, [templateFile, uploadedData, mapping, validation]);
+  }, [templateFile, uploadedData, mapping, validation, sendEmails, emailSubject]);
+
+  // Resend single email
+  const handleResendEmail = useCallback(async (cert) => {
+    if (!cert || !cert.email) {
+      throw new Error('Participant does not have an email address.');
+    }
+    try {
+      const res = await sendSingleEmailApi({
+        filename: cert.filename,
+        email: cert.email,
+        full_name: cert.participant_name,
+        certificate_id: cert.certificate_id,
+        achievement_title: cert.achievement_title || '',
+        issue_date: cert.issue_date || '',
+        subject: emailSubject || undefined,
+      });
+
+      setGeneratedCertificates((prev) =>
+        prev.map((c) =>
+          c.certificate_id === cert.certificate_id
+            ? { ...c, email_status: res.status, email_error: res.error || null }
+            : c
+        )
+      );
+
+      setSelectedCertificate((prev) => {
+        if (prev && prev.certificate_id === cert.certificate_id) {
+          return { ...prev, email_status: res.status, email_error: res.error || null };
+        }
+        return prev;
+      });
+
+      return res;
+    } catch (err) {
+      const errorMsg = err.message || 'Email dispatch failed';
+      setGeneratedCertificates((prev) =>
+        prev.map((c) =>
+          c.certificate_id === cert.certificate_id
+            ? { ...c, email_status: `Failed: ${errorMsg}`, email_error: errorMsg }
+            : c
+        )
+      );
+      throw err;
+    }
+  }, [emailSubject]);
 
   return {
     templateFile,
@@ -103,6 +163,11 @@ export function useCertificateGeneration() {
     handleClearTemplate,
     mapping,
     setMapping,
+    sendEmails,
+    setSendEmails,
+    emailSubject,
+    setEmailSubject,
+    emailStats,
     validation,
     setValidation,
     isGenerating,
@@ -112,5 +177,6 @@ export function useCertificateGeneration() {
     selectedCertificate,
     setSelectedCertificate,
     handleGenerate,
+    handleResendEmail,
   };
 }

@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { FileSpreadsheet, CheckCircle, RefreshCw, UploadCloud, AlertTriangle } from 'lucide-react';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 
 export default function UploadData({ dataFile, recordCount, onDataLoaded, onClearData }) {
   const [isDragOver, setIsDragOver] = useState(false);
@@ -12,7 +13,41 @@ export default function UploadData({ dataFile, recordCount, onDataLoaded, onClea
     setErrorMsg('');
     const fileName = file.name.toLowerCase();
 
-    if (fileName.endsWith('.json')) {
+    if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          if (!firstSheetName) {
+            setErrorMsg('Excel file contains no readable sheets.');
+            return;
+          }
+          const worksheet = workbook.Sheets[firstSheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+          if (!jsonData || jsonData.length === 0) {
+            setErrorMsg('Excel sheet contains no data rows.');
+            return;
+          }
+          const allKeys = new Set();
+          jsonData.forEach((row) => {
+            if (typeof row === 'object' && row !== null) {
+              Object.keys(row).forEach((k) => allKeys.add(k));
+            }
+          });
+          onDataLoaded({
+            file,
+            fileName: file.name,
+            records: jsonData,
+            columns: Array.from(allKeys),
+          });
+        } catch (err) {
+          setErrorMsg(`Failed to parse Excel file: ${err.message}`);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else if (fileName.endsWith('.json')) {
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
@@ -64,7 +99,7 @@ export default function UploadData({ dataFile, recordCount, onDataLoaded, onClea
         },
       });
     } else {
-      setErrorMsg('Supported data file formats: CSV, JSON.');
+      setErrorMsg('Supported data formats: CSV, JSON, Excel (XLSX/XLS).');
     }
   };
 
@@ -108,7 +143,7 @@ export default function UploadData({ dataFile, recordCount, onDataLoaded, onClea
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv, .json, text/csv, application/json"
+        accept=".csv, .json, .xlsx, .xls, text/csv, application/json, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
         style={{ display: 'none' }}
         onChange={(e) => processFile(e.target.files[0])}
       />
@@ -118,7 +153,7 @@ export default function UploadData({ dataFile, recordCount, onDataLoaded, onClea
       </div>
 
       <h4 className="upload-title">Upload Data</h4>
-      <p className="upload-hint">Upload participant data (Supported: CSV, JSON)</p>
+      <p className="upload-hint">Upload participant data (Supported: CSV, JSON, Excel XLSX/XLS)</p>
 
       {errorMsg && (
         <div style={{ color: '#f87171', fontSize: '12px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
