@@ -2,7 +2,13 @@ import React, { useMemo, useEffect } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
 import { SYSTEM_FIELDS } from './DataMapping';
 
-export default function ValidationSummary({ records = [], mapping = {}, sendEmails = false, onValidationChange }) {
+export default function ValidationSummary({
+  records = [],
+  mapping = {},
+  templatePlaceholders = [],
+  sendEmails = false,
+  onValidationChange,
+}) {
   const validationResult = useMemo(() => {
     if (!records || records.length === 0) {
       return {
@@ -16,17 +22,29 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
       };
     }
 
-    const nameCol = mapping['full_name'];
+    const hasPlaceholders = Boolean(templatePlaceholders && templatePlaceholders.length > 0);
+    const blockingErrors = [];
+
+    if (hasPlaceholders) {
+      templatePlaceholders.forEach((pKey) => {
+        if (!mapping[pKey]) {
+          blockingErrors.push(`Template placeholder {{${pKey}}} is not mapped to an uploaded column.`);
+        }
+      });
+    } else {
+      const nameCol = mapping['full_name'] || mapping['name'];
+      if (!nameCol) {
+        blockingErrors.push('Recipient Name column is not mapped.');
+      }
+    }
+
+    const namePlaceholder = hasPlaceholders
+      ? templatePlaceholders.find((p) => p.toLowerCase().includes('name'))
+      : null;
+    const nameCol = mapping['full_name'] || mapping['name'] || (namePlaceholder ? mapping[namePlaceholder] : '');
     const idCol = mapping['certificate_id'];
     const emailCol = mapping['email'];
 
-    const blockingErrors = [];
-    if (!nameCol) {
-      blockingErrors.push('Recipient Name column is not mapped.');
-    }
-    if (!idCol) {
-      blockingErrors.push('Certificate ID column is not mapped.');
-    }
     if (sendEmails && !emailCol) {
       blockingErrors.push('Recipient Email column must be mapped to dispatch emails via Gmail SMTP.');
     }
@@ -44,14 +62,15 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
       let hasWarning = false;
       let hasError = false;
 
-      if (!nameVal) {
+      if (nameCol && !nameVal) {
         hasError = true;
       }
 
-      if (!idVal) {
-        hasError = true;
-      } else {
-        if (seenIds.has(idVal)) {
+      // If user mapped a certificate ID column, check for uniqueness and missing values
+      if (idCol) {
+        if (!idVal) {
+          hasError = true;
+        } else if (seenIds.has(idVal)) {
           duplicateIds.add(idVal);
           hasError = true;
         } else {
@@ -64,14 +83,14 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
         hasWarning = true;
       }
 
-      // Check if optional certificate details are missing
-      if (!row[mapping['achievement_text']] && !row[mapping['achievement_title']]) {
-        hasWarning = true;
+      // Check if optional certificate details are missing (only in standard/generic template mode)
+      if (!hasPlaceholders) {
+        if (!row[mapping['achievement_text']] && !row[mapping['achievement_title']]) {
+          hasWarning = true;
+        }
       }
 
-      if (hasError) {
-        // Not a valid record
-      } else {
+      if (!hasError) {
         validCount++;
         if (hasWarning) {
           warningCount++;
