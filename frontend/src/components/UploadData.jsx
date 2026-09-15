@@ -25,22 +25,60 @@ export default function UploadData({ dataFile, recordCount, onDataLoaded, onClea
             return;
           }
           const worksheet = workbook.Sheets[firstSheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
-          if (!jsonData || jsonData.length === 0) {
+          if (!worksheet || !worksheet['!ref']) {
+            setErrorMsg('Excel sheet contains no data.');
+            return;
+          }
+
+          const range = XLSX.utils.decode_range(worksheet['!ref']);
+          const headers = [];
+          for (let C = range.s.c; C <= range.e.c; ++C) {
+            const cell = worksheet[XLSX.utils.encode_cell({ r: range.s.r, c: C })];
+            const headerText = cell && cell.v !== undefined ? String(cell.v).trim() : `Column_${C + 1}`;
+            headers.push(headerText);
+          }
+
+          const cleanRows = [];
+          for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+            const row = {};
+            let hasData = false;
+            for (let C = range.s.c; C <= range.e.c; ++C) {
+              const header = headers[C - range.s.c];
+              const cell = worksheet[XLSX.utils.encode_cell({ r: R, c: C })];
+              if (!cell || cell.v === undefined || cell.v === null || cell.v === '') {
+                row[header] = '';
+                continue;
+              }
+              hasData = true;
+              let val = cell.v;
+              // If formatted text exists and is NOT scientific notation, use formatted text (keeps date formatting)
+              if (cell.w && !/^[0-9.]+[eE][+-][0-9]+$/.test(cell.w)) {
+                val = String(cell.w).trim();
+              } else if (typeof val === 'number') {
+                // Prevent scientific notation for large integer IDs and numbers
+                if (Number.isInteger(val)) {
+                  val = String(BigInt(Math.round(val)));
+                } else {
+                  val = String(val);
+                }
+              } else {
+                val = String(val).trim();
+              }
+              row[header] = val;
+            }
+            if (hasData) cleanRows.push(row);
+          }
+
+          if (cleanRows.length === 0) {
             setErrorMsg('Excel sheet contains no data rows.');
             return;
           }
-          const allKeys = new Set();
-          jsonData.forEach((row) => {
-            if (typeof row === 'object' && row !== null) {
-              Object.keys(row).forEach((k) => allKeys.add(k));
-            }
-          });
+
           onDataLoaded({
             file,
             fileName: file.name,
-            records: jsonData,
-            columns: Array.from(allKeys),
+            records: cleanRows,
+            columns: headers.filter(Boolean),
           });
         } catch (err) {
           setErrorMsg(`Failed to parse Excel file: ${err.message}`);
@@ -58,15 +96,21 @@ export default function UploadData({ dataFile, recordCount, onDataLoaded, onClea
           }
           // Extract unique keys
           const allKeys = new Set();
-          parsed.forEach((row) => {
+          const cleanRows = parsed.map((row) => {
+            const clean = {};
             if (typeof row === 'object' && row !== null) {
-              Object.keys(row).forEach((k) => allKeys.add(k));
+              Object.entries(row).forEach(([k, v]) => {
+                const cleanK = k.trim();
+                clean[cleanK] = typeof v === 'string' ? v.trim() : v;
+                allKeys.add(cleanK);
+              });
             }
+            return clean;
           });
           onDataLoaded({
             file,
             fileName: file.name,
-            records: parsed,
+            records: cleanRows,
             columns: Array.from(allKeys),
           });
         } catch (err) {
@@ -87,11 +131,21 @@ export default function UploadData({ dataFile, recordCount, onDataLoaded, onClea
             setErrorMsg('CSV file is empty.');
             return;
           }
+          const rawFields = results.meta.fields || Object.keys(results.data[0] || {});
+          const trimmedColumns = rawFields.map((f) => f.trim()).filter(Boolean);
+          const cleanRows = results.data.map((row) => {
+            const clean = {};
+            Object.entries(row).forEach(([k, v]) => {
+              const cleanK = k.trim();
+              clean[cleanK] = typeof v === 'string' ? v.trim() : v;
+            });
+            return clean;
+          });
           onDataLoaded({
             file,
             fileName: file.name,
-            records: results.data,
-            columns: results.meta.fields || Object.keys(results.data[0] || {}),
+            records: cleanRows,
+            columns: trimmedColumns,
           });
         },
         error: (err) => {

@@ -16,6 +16,23 @@ export async function checkBackendHealth() {
   }
 }
 
+export async function inspectTemplateApi(templateFile) {
+  if (!templateFile) return { has_placeholders: false, placeholders: [] };
+  const formData = new FormData();
+  formData.append('template', templateFile);
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/certificates/inspect-template`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) return { has_placeholders: false, placeholders: [] };
+    return await res.json();
+  } catch {
+    return { has_placeholders: false, placeholders: [] };
+  }
+}
+
 export async function generateCertificatesApi({
   templateFile,
   participants,
