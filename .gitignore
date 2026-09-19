@@ -1,0 +1,46 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+backend/.venv/
+
+# FastAPI / backend artifacts
+*.sqlite3
+*.db
+alembic/versions/__pycache__/
+backend/sample_templates/output/
+
+# JavaScript / frontend artifacts
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+build/
+coverage/
+.npm/
+.pnpm-store/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
