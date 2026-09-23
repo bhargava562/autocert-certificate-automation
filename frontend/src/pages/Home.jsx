@@ -20,8 +20,6 @@ export default function Home() {
   const {
     templateFile,
     setTemplateFile,
-    templatePlaceholders,
-    handleTemplateSelected,
     uploadedData,
     handleDataLoaded,
     handleClearData,
@@ -163,7 +161,7 @@ export default function Home() {
           <div className="upload-grid">
             <UploadTemplate
               templateFile={templateFile}
-              onTemplateSelected={handleTemplateSelected}
+              onTemplateSelected={setTemplateFile}
               onClearTemplate={handleClearTemplate}
             />
 
@@ -181,7 +179,6 @@ export default function Home() {
               columns={uploadedData.columns}
               mapping={mapping}
               onMappingChange={setMapping}
-              templatePlaceholders={templatePlaceholders}
               sendEmails={sendEmails}
               onSendEmailsChange={setSendEmails}
               emailSubject={emailSubject}
@@ -194,7 +191,6 @@ export default function Home() {
             <ValidationSummary
               records={uploadedData.records}
               mapping={mapping}
-              templatePlaceholders={templatePlaceholders}
               sendEmails={sendEmails}
               onValidationChange={setValidation}
             />

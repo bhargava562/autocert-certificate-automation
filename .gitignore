@@ -19,6 +19,7 @@ htmlcov/
 .venv/
 venv/
 env/
+backend/.venv/
 
 # FastAPI / backend artifacts
 *.sqlite3
@@ -28,7 +29,9 @@ backend/sample_templates/output/
 
 # JavaScript / frontend artifacts
 node_modules/
+frontend/node_modules/
 dist/
+frontend/dist/
 build/
 coverage/
 .npm/

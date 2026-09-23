@@ -51,20 +51,12 @@ This repository contains the backend and database architecture for the Autocert 
   - Added PyMuPDF in-memory vector PDF rasterizer (`convert_pdf_to_image_bytes`) for handling uploaded PDF templates.
   - Multi-threaded CPU rendering using Python `concurrent.futures.ThreadPoolExecutor(max_workers=min(16, os.cpu_count() + 4))` for instantaneous bulk batch generation.
   - Paced SMTP STARTTLS connection session (0.15s pacing) preventing Gmail socket throttling with per-recipient error isolation.
-  - Dynamic API endpoints: `POST /api/certificates/generate`, `POST /api/certificates/send-batch-emails`, `POST /api/certificates/send-single-email`, `POST /api/certificates/test-smtp`, `POST /api/certificates/inspect-template`, and `GET /api/certificates/download/{filename}`.
-- **Dynamic PDF Placeholder Extraction & In-Place Redaction**:
-  - Vector PDF templates scanned automatically for `{{placeholder}}` tokens with styling extraction (font, size, color, bbox) via `detect_pdf_placeholders`.
-  - Zero-latency client-side PDF text scanning in `UploadTemplate` / `useCertificateGeneration` displays placeholders immediately upon file selection.
-  - Vector PDF in-place rendering via `render_pdf_with_placeholders`: single-batch redaction pass, bold font reproduction (`hebo`), color fidelity, and dynamic width downscaling.
-- **Robust Excel (XLSX) Parsing & Smart Column Auto-Matching**:
-  - Custom cell decoder in `UploadData.jsx` extracts raw big integers (such as 12-digit college register numbers) without scientific notation (`1.11724E+11`), trims column headers, and preserves formatted date strings.
-  - Token-based fuzzy matching in `findBestMatchingColumn` auto-maps verbose question headers (e.g. `Student Name (as per College ID card)`, `College Register Number`, `Email address`) to template placeholders and system fields.
-  - Dynamic UI badges for detected PDF placeholders with synchronized state refs preventing upload-order race conditions.
+  - Dynamic API endpoints: `POST /api/certificates/generate`, `POST /api/certificates/send-batch-emails`, `POST /api/certificates/send-single-email`, `POST /api/certificates/test-smtp`, and `GET /api/certificates/download/{filename}`.
 - **Dependencies & Environments**: Pinned exact versions in `backend/requirements.txt` (including `python-multipart==0.0.32`), installed and validated inside `.venv`.
 - **Protected Main Branch**: GitHub branch protection active on `main`; all updates are merged cleanly.
 
 ### 2. Next Action on Standby
-- Vector PDF template with dynamic placeholders (`sample cert 2.pdf`) and 259-row response spreadsheet verified; ready for end-to-end user verification or Supabase DB persistence.
+- Frontend and backend batch integration verified; ready for end-to-end production runs or Supabase DB persistence integration.
 
 ---
 

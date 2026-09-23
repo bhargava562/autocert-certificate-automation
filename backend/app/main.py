@@ -9,7 +9,6 @@ Provides endpoints for:
 
 import os
 import io
-import re
 import time
 import json
 import uuid
@@ -29,6 +28,7 @@ from .core.config import load_settings, Settings
 from .services.models import TemplateManifest, FieldConfig
 from .services.text_fitting import TextFittingService
 from .services.engines.image_engine import PillowImageEngine
+from .services.template_scanner import scan_template_placeholders
 
 app = FastAPI(
     title="Autocert Certificate Automation API",
@@ -78,33 +78,6 @@ def build_default_manifest(filename: str, output_format: str = "png") -> Templat
                     clear_area=(0.15, 0.385, 0.85, 0.4855),
                     clear_bg_color="#F9F9F9",
                 ),
-                "achievement_text": FieldConfig(
-                    name="achievement_text",
-                    x_pct=0.50,
-                    y_pct=0.575,
-                    max_w_pct=0.70,
-                    font_family="serif",
-                    font_size_pct=0.028,
-                    min_font_size_pct=0.014,
-                    align="center",
-                    color="#2D2D2D",
-                    line_spacing=1.45,
-                    clear_area=(0.15, 0.492, 0.85, 0.635),
-                    clear_bg_color="#F9F9F9",
-                ),
-                "issue_date": FieldConfig(
-                    name="issue_date",
-                    x_pct=0.50,
-                    y_pct=0.678,
-                    max_w_pct=0.40,
-                    font_family="sans-serif",
-                    font_size_pct=0.024,
-                    min_font_size_pct=0.013,
-                    align="center",
-                    color="#444444",
-                    clear_area=(0.25, 0.640, 0.75, 0.715),
-                    clear_bg_color="#F9F9F9",
-                ),
             }
         )
     elif "internship" in fn_lower or "red" in fn_lower:
@@ -128,38 +101,12 @@ def build_default_manifest(filename: str, output_format: str = "png") -> Templat
                     clear_area=(0.20, 0.35, 0.80, 0.44),
                     clear_bg_color="#FFFFFF"
                 ),
-                "achievement_title": FieldConfig(
-                    name="achievement_title",
-                    x_pct=0.50,
-                    y_pct=0.542,
-                    max_w_pct=0.65,
-                    font_family="sans-serif",
-                    font_size_pct=0.034,
-                    min_font_size_pct=0.015,
-                    align="center",
-                    color="#333333",
-                    clear_area=(0.20, 0.51, 0.80, 0.57),
-                    clear_bg_color="#FFFFFF"
-                ),
-                "issue_date": FieldConfig(
-                    name="issue_date",
-                    x_pct=0.50,
-                    y_pct=0.640,
-                    max_w_pct=0.50,
-                    font_family="sans-serif",
-                    font_size_pct=0.030,
-                    min_font_size_pct=0.015,
-                    align="center",
-                    color="#444444",
-                    clear_area=(0.25, 0.618, 0.75, 0.670),
-                    clear_bg_color="#FFFFFF"
-                ),
             }
         )
     else:
-        # Default elegant manifest with dynamic text fitting
+        # Default participation certificate manifest (RMK / GDG Study Jam template)
         return TemplateManifest(
-            template_id="generic_certificate",
+            template_id="rmk_participation",
             template_filename=filename,
             default_format=normalized_format,
             base_width=2000,
@@ -167,258 +114,66 @@ def build_default_manifest(filename: str, output_format: str = "png") -> Templat
             fields={
                 "full_name": FieldConfig(
                     name="full_name",
-                    x_pct=0.50,
-                    y_pct=0.440,
-                    max_w_pct=0.70,
-                    font_family="script",
-                    font_size_pct=0.065,
-                    min_font_size_pct=0.020,
-                    align="center",
-                    color="#1A5C47",
-                    clear_area=None,
-                    clear_bg_color=None,
-                ),
-                "achievement_text": FieldConfig(
-                    name="achievement_text",
-                    x_pct=0.50,
-                    y_pct=0.580,
-                    max_w_pct=0.72,
-                    font_family="serif",
-                    font_size_pct=0.028,
-                    min_font_size_pct=0.014,
-                    align="center",
-                    color="#2D2D2D",
-                    line_spacing=1.45,
-                    clear_area=None,
-                    clear_bg_color=None,
-                ),
-                "issue_date": FieldConfig(
-                    name="issue_date",
-                    x_pct=0.50,
-                    y_pct=0.680,
-                    max_w_pct=0.45,
+                    x_pct=0.470,
+                    y_pct=0.592,
+                    max_w_pct=0.20,
                     font_family="sans-serif",
                     font_size_pct=0.024,
-                    min_font_size_pct=0.013,
+                    min_font_size_pct=0.012,
                     align="center",
-                    color="#444444",
-                    clear_area=None,
-                    clear_bg_color=None,
+                    color="#0f172a",
+                    clear_area=(0.420, 0.550, 0.535, 0.635),
+                    clear_bg_color="transparent",
+                ),
+                "year": FieldConfig(
+                    name="year",
+                    x_pct=0.630,
+                    y_pct=0.592,
+                    max_w_pct=0.07,
+                    font_family="sans-serif",
+                    font_size_pct=0.024,
+                    min_font_size_pct=0.012,
+                    align="center",
+                    color="#0f172a",
+                    clear_area=(0.595, 0.550, 0.672, 0.635),
+                    clear_bg_color="transparent",
+                ),
+                "department": FieldConfig(
+                    name="department",
+                    x_pct=0.758,
+                    y_pct=0.592,
+                    max_w_pct=0.08,
+                    font_family="sans-serif",
+                    font_size_pct=0.024,
+                    min_font_size_pct=0.012,
+                    align="center",
+                    color="#0f172a",
+                    clear_area=(0.715, 0.550, 0.800, 0.635),
+                    clear_bg_color="transparent",
                 ),
             }
         )
 
 
 def normalize_record(p: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalizes participant fields while preserving all dynamic template placeholder fields."""
-    norm = dict(p)
-    full_name = str(p.get("full_name") or p.get("recipient_name") or p.get("name") or "").strip()
-    norm["full_name"] = full_name
-    if not norm.get("name"):
-        norm["name"] = full_name
+    """Normalizes participant fields. Empty optional fields remain empty and are not drawn over pre-printed template text."""
+    full_name = p.get("full_name") or p.get("recipient_name") or p.get("name") or ""
+    achievement_text = p.get("achievement_text") or p.get("description") or ""
 
-    cert_id = str(p.get("certificate_id") or "").strip()
-    norm["certificate_id"] = cert_id
-
-    email = str(p.get("email") or p.get("email_address") or p.get("mail") or "").strip()
-    norm["email"] = email
-
-    achievement_text = str(p.get("achievement_text") or "").strip()
-    if not achievement_text:
-        pronoun = "her" if str(p.get("gender", "")).lower() == "female" else "his"
-        event = p.get("event_name") or p.get("achievement_title") or "the certification program"
-        date_str = p.get("participated_date") or p.get("issue_date") or "2026"
-        org = p.get("organization_on_certificate") or p.get("organization") or "Organization"
-        achievement_text = (
-            f"In appreciation of {pronoun} exceptional achievements and contributions "
-            f"in {event}, which have greatly enhanced the values of {org} on {date_str}."
-        )
-    norm["achievement_text"] = achievement_text
-    norm.setdefault("achievement_title", str(p.get("achievement_title") or p.get("role") or "").strip())
-    norm.setdefault("event_name", str(p.get("event_name") or p.get("achievement_title") or "Certificate of Achievement").strip())
-    norm.setdefault("issue_date", str(p.get("issue_date") or p.get("participated_date") or "").strip())
-    norm.setdefault("signer_name", str(p.get("signer_name") or "").strip())
-    norm.setdefault("signer_title", str(p.get("signer_title") or "").strip())
-    norm.setdefault("organization", str(p.get("organization_on_certificate") or p.get("organization") or "").strip())
-
-    return norm
-
-
-def detect_pdf_placeholders(pdf_bytes: bytes) -> Dict[str, Any]:
-    """Scans the first page of a vector PDF for {{placeholder}} tokens and styling."""
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        if doc.page_count == 0:
-            return {"has_placeholders": False, "placeholders": [], "details": []}
-        page = doc[0]
-        text = page.get_text("text")
-        raw_matches = re.findall(r'\{\{\s*([a-zA-Z0-9_\s-]+?)\s*\}\}', text)
-        unique_keys = list(dict.fromkeys(m.strip() for m in raw_matches if m.strip()))
-
-        blocks = page.get_text("dict").get("blocks", [])
-        span_map = {}
-        for b in blocks:
-            for l in b.get("lines", []):
-                for s in l.get("spans", []):
-                    span_text = s.get("text", "")
-                    for m in re.findall(r'\{\{\s*([a-zA-Z0-9_\s-]+?)\s*\}\}', span_text):
-                        clean_m = m.strip()
-                        if clean_m and clean_m not in span_map:
-                            span_map[clean_m] = {
-                                "font": s.get("font", "helv"),
-                                "size": s.get("size", 10),
-                                "color": s.get("color", 0),
-                            }
-                        if clean_m and clean_m not in unique_keys:
-                            unique_keys.append(clean_m)
-
-        doc.close()
-        return {
-            "has_placeholders": len(unique_keys) > 0,
-            "placeholders": unique_keys,
-            "details": [{"key": k, **span_map.get(k, {})} for k in unique_keys]
-        }
-    except Exception as exc:
-        print(f"[detect_pdf_placeholders] Error: {exc}")
-        return {"has_placeholders": False, "placeholders": [], "details": [], "error": str(exc)}
-
-
-def render_pdf_with_placeholders(
-    pdf_bytes: bytes,
-    participant: Dict[str, Any],
-    output_format: str,
-    output_dir: str
-) -> Dict[str, Any]:
-    """Replaces {{placeholder}} tokens inside a vector PDF with participant values."""
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        page = doc[0]
-
-        blocks = page.get_text("dict").get("blocks", [])
-        span_map = {}
-        for b in blocks:
-            for l in b.get("lines", []):
-                for s in l.get("spans", []):
-                    span_text = s.get("text", "")
-                    for m in re.findall(r'\{\{\s*([a-zA-Z0-9_\s-]+?)\s*\}\}', span_text):
-                        clean_m = m.strip()
-                        if clean_m and clean_m not in span_map:
-                            span_map[clean_m] = {
-                                "font": s.get("font", "helv"),
-                                "size": s.get("size", 10),
-                                "color": s.get("color", 0),
-                            }
-
-        # Step 1: Collect rects to redact and items to insert
-        items_to_render = []
-        for key, val in participant.items():
-            if val is None or str(val).strip() == "":
-                continue
-            val_str = str(val).strip()
-
-            # Search patterns
-            rects = page.search_for(f"{{{{{key}}}}}")
-            if not rects:
-                rects = page.search_for(f"{{{{ {key} }}}}")
-            if not rects:
-                # Case insensitive / relaxed search
-                for span_k in span_map.keys():
-                    if span_k.lower() == key.lower():
-                        rects = page.search_for(f"{{{{{span_k}}}}}")
-                        break
-
-            if rects:
-                r = rects[0]
-                page.add_redact_annot(r)
-
-                info = span_map.get(key, {})
-                c_int = info.get("color", 0)
-                red = ((c_int >> 16) & 255) / 255.0
-                green = ((c_int >> 8) & 255) / 255.0
-                blue = (c_int & 255) / 255.0
-                color_tuple = (red, green, blue)
-                base_size = float(info.get("size", 9))
-                orig_font = str(info.get("font", "helv")).lower()
-
-                # Use bold font if original is bold
-                if "bold" in orig_font:
-                    fitz_font = "hebo"
-                elif "times" in orig_font:
-                    fitz_font = "times"
-                else:
-                    fitz_font = "helv"
-
-                # Smart font size fitting
-                font_obj = fitz.Font(fitz_font)
-                text_w = font_obj.text_length(val_str, fontsize=base_size)
-                max_allowed_w = max(r.width * 2.5, 160.0)
-                if text_w > max_allowed_w:
-                    fit_size = max(5.5, base_size * (max_allowed_w / text_w))
-                else:
-                    fit_size = base_size
-
-                items_to_render.append({
-                    "point": (r.x0, r.y1 - 1.5),
-                    "text": val_str,
-                    "font": fitz_font,
-                    "size": fit_size,
-                    "color": color_tuple
-                })
-
-        # Step 2: Apply all redactions cleanly in one pass
-        page.apply_redactions()
-
-        # Step 3: Insert replacement text
-        for item in items_to_render:
-            page.insert_text(
-                item["point"],
-                item["text"],
-                fontname=item["font"],
-                fontsize=item["size"],
-                color=item["color"]
-            )
-
-        cert_id = participant.get("certificate_id") or f"CERT-{uuid.uuid4().hex[:6]}"
-        name = participant.get("full_name") or participant.get("name") or "Participant"
-        clean_name = re.sub(r'[\\/*?:"<>| ]', '_', str(name)).strip('_')[:35]
-        clean_id = re.sub(r'[\\/*?:"<>| ]', '_', str(cert_id)).strip('_')
-
-        if str(output_format).lower() == "pdf":
-            out_filename = f"{clean_id}_{clean_name}.pdf"
-            out_path = os.path.join(output_dir, out_filename)
-            doc.save(out_path)
-        else:
-            out_filename = f"{clean_id}_{clean_name}.png"
-            out_path = os.path.join(output_dir, out_filename)
-            pix = page.get_pixmap(dpi=200)
-            pix.save(out_path)
-
-        doc.close()
-
-        return {
-            "certificate_id": cert_id,
-            "participant_name": name,
-            "email": participant.get("email") or "",
-            "status": "Generated",
-            "filename": out_filename,
-            "preview_url": f"/api/certificates/download/{out_filename}",
-            "file_path": out_path,
-            "item_data": participant
-        }
-    except Exception as err:
-        cert_id = participant.get("certificate_id") or f"CERT-{uuid.uuid4().hex[:6]}"
-        name = participant.get("full_name") or participant.get("name") or "Participant"
-        return {
-            "certificate_id": cert_id,
-            "participant_name": name,
-            "email": participant.get("email") or "",
-            "status": "Failed",
-            "filename": "",
-            "preview_url": "",
-            "file_path": "",
-            "error": str(err),
-            "item_data": participant
-        }
+    return {
+        "full_name": full_name.strip(),
+        "certificate_id": str(p.get("certificate_id") or "").strip(),
+        "email": str(p.get("email") or p.get("email_address") or p.get("mail") or "").strip(),
+        "year": str(p.get("year") or p.get("academic_year") or p.get("batch_year") or p.get("class") or "").strip(),
+        "department": str(p.get("department") or p.get("dept") or p.get("branch") or p.get("stream") or "").strip(),
+        "achievement_title": str(p.get("achievement_title") or p.get("role") or "").strip(),
+        "achievement_text": achievement_text.strip() if achievement_text else "",
+        "event_name": str(p.get("event_name") or p.get("achievement_title") or "").strip(),
+        "issue_date": str(p.get("issue_date") or p.get("participated_date") or "").strip(),
+        "signer_name": str(p.get("signer_name") or "").strip(),
+        "signer_title": str(p.get("signer_title") or "").strip(),
+        "organization": str(p.get("organization_on_certificate") or p.get("organization") or "").strip(),
+    }
 
 
 def convert_pdf_to_image_bytes(pdf_bytes: bytes, dpi: int = 150) -> bytes:
@@ -549,21 +304,6 @@ def health_check():
     }
 
 
-@app.post("/api/certificates/inspect-template")
-async def inspect_template(template: UploadFile = File(...)):
-    """Extracts detected dynamic placeholders from an uploaded certificate template."""
-    filename = template.filename or "template.png"
-    ext = filename.lower().split(".")[-1]
-    if ext != "pdf":
-        return {"has_placeholders": False, "placeholders": [], "details": []}
-
-    template_bytes = await template.read()
-    if not template_bytes:
-        return {"has_placeholders": False, "placeholders": [], "details": []}
-
-    return detect_pdf_placeholders(template_bytes)
-
-
 @app.post("/api/certificates/generate")
 @app.post("/certificate/batches/generate")
 async def generate_certificates(
@@ -594,21 +334,17 @@ async def generate_certificates(
             detail="Uploaded template file is empty."
         )
 
-    # 2. Inspect template for dynamic placeholders
-    pdf_placeholders_info = detect_pdf_placeholders(template_bytes) if ext == "pdf" else {"has_placeholders": False}
-    has_pdf_placeholders = bool(pdf_placeholders_info.get("has_placeholders"))
-
-    if not has_pdf_placeholders:
-        if ext == "pdf":
-            try:
-                image_template_bytes = convert_pdf_to_image_bytes(template_bytes, dpi=200)
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Could not parse PDF template: {str(e)}"
-                )
-        else:
-            image_template_bytes = template_bytes
+    # 2. Normalize template bytes to renderable image bytes
+    if ext == "pdf":
+        try:
+            image_template_bytes = convert_pdf_to_image_bytes(template_bytes, dpi=200)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Could not parse PDF template: {str(e)}"
+            )
+    else:
+        image_template_bytes = template_bytes
 
     # 3. Parse participant JSON
     try:
@@ -638,33 +374,36 @@ async def generate_certificates(
             norm["certificate_id"] = f"CERT-{idx:04d}"
         normalized_list.append(norm)
 
-    # 5. Build manifest & initialize rendering engine (for image/generic rendering)
-    if not has_pdf_placeholders:
-        manifest = build_default_manifest(filename, output_format=format)
-        text_service = TextFittingService()
-        engine = PillowImageEngine(text_service)
+    # 5. Build manifest & initialize rendering engine by scanning template for exact text placeholders
+    manifest = scan_template_placeholders(
+        template_bytes=template_bytes,
+        filename=filename,
+        default_format=format
+    )
+    text_service = TextFittingService()
+    engine = PillowImageEngine(text_service)
+
+    # Clean output folder before generating new batch to eliminate stale artifacts
+    for f in os.listdir(OUTPUT_DIR):
+        fp = os.path.join(OUTPUT_DIR, f)
+        if os.path.isfile(fp):
+            try:
+                os.remove(fp)
+            except Exception:
+                pass
 
     # 6. Concurrency: Multi-threaded parallel certificate rendering
     batch_id = f"batch_{uuid.uuid4().hex[:8]}"
     max_workers = min(16, (os.cpu_count() or 1) + 4)
 
-    if has_pdf_placeholders:
-        def _render_task(item):
-            return render_pdf_with_placeholders(
-                pdf_bytes=template_bytes,
-                participant=item,
-                output_format=format,
-                output_dir=OUTPUT_DIR
-            )
-    else:
-        def _render_task(item):
-            return render_single_certificate(
-                item=item,
-                image_bytes=image_template_bytes,
-                manifest=manifest,
-                engine=engine,
-                output_dir=OUTPUT_DIR
-            )
+    def _render_task(item):
+        return render_single_certificate(
+            item=item,
+            image_bytes=image_template_bytes,
+            manifest=manifest,
+            engine=engine,
+            output_dir=OUTPUT_DIR
+        )
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         generated_results = list(executor.map(_render_task, normalized_list))
