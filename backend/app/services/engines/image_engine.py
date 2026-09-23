@@ -34,18 +34,17 @@ class PillowImageEngine:
 
         # Render each field defined in the manifest
         for field_name, config in manifest.fields.items():
-            # 1. ALWAYS wipe clear_area first if specified to guarantee zero placeholder text remains
+            # 1. Wipe clear_area first if specified and non-transparent
             if config.clear_area:
-                x1 = int(canvas_w * config.clear_area[0])
-                y1 = int(canvas_h * config.clear_area[1])
-                x2 = int(canvas_w * config.clear_area[2])
-                y2 = int(canvas_h * config.clear_area[3])
-
                 fill_color = config.clear_bg_color
-                if not fill_color or str(fill_color).lower() == "auto":
-                    fill_color = "#FFFFFF"
-
-                draw.rectangle([(x1, y1), (x2, y2)], fill=fill_color)
+                if fill_color and str(fill_color).lower() not in ("none", "transparent", "false"):
+                    if str(fill_color).lower() == "auto":
+                        fill_color = "#FFFFFF"
+                    x1 = int(canvas_w * config.clear_area[0])
+                    y1 = int(canvas_h * config.clear_area[1])
+                    x2 = int(canvas_w * config.clear_area[2])
+                    y2 = int(canvas_h * config.clear_area[3])
+                    draw.rectangle([(x1, y1), (x2, y2)], fill=fill_color)
 
             # 2. Extract value for rendering
             val = fields.get(field_name)

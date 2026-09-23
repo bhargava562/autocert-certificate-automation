@@ -106,7 +106,7 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
                 align="center",
                 color="#0f172a",
                 clear_area=(0.420, 0.550, 0.535, 0.635),
-                clear_bg_color="#FFFFFF",
+                clear_bg_color="transparent",
             ),
             "year": FieldConfig(
                 name="year",
@@ -119,7 +119,7 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
                 align="center",
                 color="#0f172a",
                 clear_area=(0.595, 0.550, 0.672, 0.635),
-                clear_bg_color="#FFFFFF",
+                clear_bg_color="transparent",
             ),
             "department": FieldConfig(
                 name="department",
@@ -132,7 +132,7 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
                 align="center",
                 color="#0f172a",
                 clear_area=(0.715, 0.550, 0.800, 0.635),
-                clear_bg_color="#FFFFFF",
+                clear_bg_color="transparent",
             ),
         }
     )
