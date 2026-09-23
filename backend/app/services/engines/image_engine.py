@@ -34,22 +34,30 @@ class PillowImageEngine:
 
         # Render each field defined in the manifest
         for field_name, config in manifest.fields.items():
+            # 1. Wipe clear_area first if specified and non-transparent
+            if config.clear_area:
+                fill_color = config.clear_bg_color
+                if fill_color and str(fill_color).lower() not in ("none", "transparent", "false"):
+                    if str(fill_color).lower() == "auto":
+                        fill_color = "#FFFFFF"
+                    x1 = int(canvas_w * config.clear_area[0])
+                    y1 = int(canvas_h * config.clear_area[1])
+                    x2 = int(canvas_w * config.clear_area[2])
+                    y2 = int(canvas_h * config.clear_area[3])
+                    draw.rectangle([(x1, y1), (x2, y2)], fill=fill_color)
+
+            # 2. Extract value for rendering
             val = fields.get(field_name)
             if val is None:
-                # Check known synonym mappings for template flexibility
+                # Check known synonym mappings
                 if field_name in ("recipient_name", "name", "full_name"):
                     val = fields.get("full_name") or fields.get("recipient_name") or fields.get("name")
+                elif field_name in ("year", "academic_year", "class"):
+                    val = fields.get("year") or fields.get("academic_year") or fields.get("batch_year") or fields.get("class")
+                elif field_name in ("department", "dept", "branch"):
+                    val = fields.get("department") or fields.get("dept") or fields.get("branch") or fields.get("stream")
                 elif field_name in ("event_name", "eventname"):
                     val = fields.get("event_name") or fields.get("eventname") or fields.get("achievement_title")
-                elif field_name in ("description", "achievement_text"):
-                    val = fields.get("achievement_text") or fields.get("description")
-                    if not val and fields.get("event_name"):
-                        pronoun = "Her" if str(fields.get("gender", "")).lower() == "female" else "His"
-                        date_str = fields.get("participated_date") or fields.get("issue_date", "")
-                        val = f"has successfully completed {fields.get('event_name')} conducted on {date_str}.\n{pronoun} dedication and commitment to the learning process are truly commendable."
-                elif field_name in ("awarded_date", "award_date"):
-                    issue_dt = fields.get("issue_date") or fields.get("participated_date", "")
-                    val = f"Awarded on {issue_dt}" if issue_dt else None
                 elif field_name in ("role", "achievement_title", "title"):
                     val = fields.get("role") or fields.get("achievement_title") or fields.get("title")
                 elif field_name in ("date", "issue_date"):
@@ -61,34 +69,6 @@ class PillowImageEngine:
             if not text_str:
                 continue
 
-            if config.clear_area:
-                x1 = int(canvas_w * config.clear_area[0])
-                y1 = int(canvas_h * config.clear_area[1])
-                x2 = int(canvas_w * config.clear_area[2])
-                y2 = int(canvas_h * config.clear_area[3])
-
-                # Determine background fill color
-                fill_color = config.clear_bg_color
-                if not fill_color or str(fill_color).lower() == "auto":
-                    sample_x = min(canvas_w - 1, max(0, x1 + 5))
-                    sample_y = min(canvas_h - 1, max(0, y1 + 5))
-                    fill_color = img.getpixel((sample_x, sample_y))
-
-                draw.rectangle([(x1, y1), (x2, y2)], fill=fill_color)
-
-                # Defensive line repair for white-green certificate if {{name}} overlapped the line
-                t_id = getattr(manifest, "template_id", "").lower()
-                t_fn = getattr(manifest, "template_filename", "").lower()
-                if ("white" in t_id or "green" in t_id or "completion" in t_id or
-                    "white" in t_fn or "green" in t_fn or "completion" in t_fn):
-                    line_y = int(canvas_h * 0.488)
-                    line_w = max(1, int(canvas_h * 0.0035))
-                    draw.line(
-                        [(int(canvas_w * 0.35), line_y), (int(canvas_w * 0.65), line_y)],
-                        fill=(28, 105, 84),
-                        width=line_w
-                    )
-
             max_width = int(canvas_w * config.max_w_pct)
             target_size = max(10, int(canvas_h * config.font_size_pct))
             min_size = (
@@ -98,8 +78,7 @@ class PillowImageEngine:
             )
 
             # Handle multi-line vs single-line
-            if len(text_str) > 70 or "\n" in text_str or config.font_size_pct <= 0.035:
-                # Body / paragraph text (e.g. achievement description)
+            if len(text_str) > 70 or "\n" in text_str or config.font_size_pct <= 0.020:
                 font = self.text_service.load_font(config.font_family, target_size)
                 lines = self.text_service.wrap_text(draw, text_str, font, max_width)
                 line_height = int(target_size * config.line_spacing)
@@ -112,7 +91,11 @@ class PillowImageEngine:
                     bbox = draw.textbbox((0, 0), line, font=font)
                     line_w = bbox[2] - bbox[0]
                     if config.align == "center":
-                        line_x = self.text_service.calculate_center_x(canvas_w, line_w)
+                        if config.clear_area:
+                            box_center_x = (config.clear_area[0] + config.clear_area[2]) / 2.0 * canvas_w
+                            line_x = int(box_center_x - (line_w / 2.0))
+                        else:
+                            line_x = self.text_service.calculate_center_x(canvas_w, line_w)
                     elif config.align == "right":
                         line_x = int(canvas_w * config.x_pct) - line_w
                     else:
@@ -121,7 +104,6 @@ class PillowImageEngine:
                     draw.text((line_x, curr_y), line, font=font, fill=config.color)
                     curr_y += line_height
             else:
-                # Single-line prominent text (e.g. recipient_name)
                 font, actual_size, text_w = self.text_service.fit_text_to_width(
                     draw=draw,
                     text=text_str,
@@ -132,7 +114,11 @@ class PillowImageEngine:
                 )
 
                 if config.align == "center":
-                    x = self.text_service.calculate_center_x(canvas_w, text_w)
+                    if config.clear_area:
+                        box_center_x = (config.clear_area[0] + config.clear_area[2]) / 2.0 * canvas_w
+                        x = int(box_center_x - (text_w / 2.0))
+                    else:
+                        x = self.text_service.calculate_center_x(canvas_w, text_w)
                 elif config.align == "right":
                     x = int(canvas_w * config.x_pct) - text_w
                 else:

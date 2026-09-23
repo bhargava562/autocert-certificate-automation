@@ -206,16 +206,7 @@ def normalize_participant(p: dict) -> dict:
     Field resolution order ensures fallback without duplication.
     """
     full_name = p.get("full_name") or p.get("recipient_name") or p.get("name") or ""
-    achievement_text = p.get("achievement_text") or ""
-    if not achievement_text:
-        pronoun = "her" if str(p.get("gender", "")).lower() == "female" else "his"
-        event = p.get("event_name") or p.get("achievement_title") or ""
-        date_str = p.get("participated_date") or p.get("issue_date") or ""
-        org = p.get("organization_on_certificate") or p.get("organization") or ""
-        achievement_text = (
-            f"In appreciation of {pronoun} exceptional achievements and contributions "
-            f"in {event}, which have greatly enhanced the values of {org} on {date_str}."
-        ) if event else ""
+    achievement_text = p.get("achievement_text") or p.get("description") or ""
     return {
         "full_name": full_name,
         "certificate_id": p.get("certificate_id", ""),
