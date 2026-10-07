@@ -38,6 +38,8 @@ export default function CertificatePreview({ certificate, onResendEmail }) {
     }
   };
 
+  const isPdf = certificate.filename?.toLowerCase().endsWith('.pdf');
+
   return (
     <div className="preview-card">
       <div className="preview-toolbar">
@@ -52,6 +54,9 @@ export default function CertificatePreview({ certificate, onResendEmail }) {
             <span>•</span>
             <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
               ID: {certificate.certificate_id}
+            </span>
+            <span className={`badge ${isPdf ? 'badge-primary' : 'badge-neutral'}`} style={{ fontSize: '10px' }}>
+              {isPdf ? 'PDF' : 'PNG'}
             </span>
             {certificate.email_status && (
               <>
@@ -88,46 +93,65 @@ export default function CertificatePreview({ certificate, onResendEmail }) {
             </button>
           )}
 
-          <button
-            type="button"
-            className="btn-secondary btn-sm"
-            onClick={() => setIsZoomed(true)}
-            title="Zoom into certificate"
-          >
-            <ZoomIn size={14} />
-            <span>Zoom</span>
-          </button>
+          {!isPdf && (
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() => setIsZoomed(true)}
+              title="Zoom into certificate"
+            >
+              <ZoomIn size={14} />
+              <span>Zoom</span>
+            </button>
+          )}
 
           <button
             type="button"
             className="btn-primary btn-sm"
             onClick={handleDownload}
-            title="Download high-resolution PNG"
+            title={isPdf ? 'Download vector PDF document' : 'Download high-resolution PNG image'}
           >
             <Download size={14} />
-            <span>Download PNG</span>
+            <span>{isPdf ? 'Download PDF' : 'Download PNG'}</span>
           </button>
         </div>
       </div>
 
-      <div className="image-canvas-wrapper">
-        {isImageLoading && (
-          <div style={{ position: 'absolute', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)' }}>
-            <Loader2 size={24} className="animate-spin" color="#10b981" />
-            <span>Loading certificate...</span>
-          </div>
-        )}
+      <div className="image-canvas-wrapper" style={isPdf ? { padding: '8px', minHeight: '520px' } : {}}>
+        {isPdf ? (
+          <iframe
+            key={imageUrl}
+            src={imageUrl}
+            title={`PDF Certificate for ${certificate.participant_name}`}
+            style={{
+              width: '100%',
+              height: '520px',
+              border: 'none',
+              borderRadius: '8px',
+              backgroundColor: '#fff'
+            }}
+          />
+        ) : (
+          <>
+            {isImageLoading && (
+              <div style={{ position: 'absolute', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)' }}>
+                <Loader2 size={24} className="animate-spin" color="#10b981" />
+                <span>Loading certificate...</span>
+              </div>
+            )}
 
-        <img
-          key={imageUrl}
-          src={imageUrl}
-          alt={`Certificate for ${certificate.participant_name}`}
-          className="cert-image-display"
-          onLoad={() => setIsImageLoading(false)}
-          onError={() => setIsImageLoading(false)}
-          onClick={() => setIsZoomed(true)}
-          title="Click to zoom"
-        />
+            <img
+              key={imageUrl}
+              src={imageUrl}
+              alt={`Certificate for ${certificate.participant_name}`}
+              className="cert-image-display"
+              onLoad={() => setIsImageLoading(false)}
+              onError={() => setIsImageLoading(false)}
+              onClick={() => setIsZoomed(true)}
+              title="Click to zoom"
+            />
+          </>
+        )}
       </div>
 
       {/* Fullscreen Zoom Modal */}
