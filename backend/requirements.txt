@@ -43,3 +43,9 @@ lxml==6.1.3
 psycopg==3.3.5
 psycopg-binary==3.3.5
 tzdata==2026.3
+
+# Spreadsheet & Dataset Ingestion (Excel XLSX, XLS, CSV)
+openpyxl==3.1.5
+xlrd==2.0.2
+et-xmlfile==2.0.0
+

@@ -17,6 +17,7 @@ from email.message import EmailMessage
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
 
+import re
 import fitz  # PyMuPDF
 import jinja2
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status, Body
@@ -29,6 +30,7 @@ from .services.models import TemplateManifest, FieldConfig
 from .services.text_fitting import TextFittingService
 from .services.engines.image_engine import PillowImageEngine
 from .services.template_scanner import scan_template_placeholders
+from .services.dataset_parser import load_dataset
 
 app = FastAPI(
     title="Autocert Certificate Automation API",
@@ -177,11 +179,23 @@ def normalize_record(p: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def convert_pdf_to_image_bytes(pdf_bytes: bytes, dpi: int = 150) -> bytes:
-    """Converts the first page of a vector PDF template into high-res PNG image bytes."""
+    """Converts the first page of a vector PDF template into high-res PNG image bytes, redacting any template placeholders."""
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     if doc.page_count == 0:
         raise ValueError("Uploaded PDF template has no pages.")
     page = doc[0]
+
+    # Defensively erase any curly-bracket placeholders like {{name}}, {{work}}, {{date}}
+    page_text = page.get_text()
+    found_tags = set(re.findall(r"\{\{([^}]+)\}\}", page_text))
+    for tag in found_tags:
+        occurrences = page.search_for(f"{{{{{tag}}}}}")
+        for occ in occurrences:
+            r_exp = fitz.Rect(occ.x0 - 2, occ.y0 - 2, occ.x1 + 2, occ.y1 + 2)
+            page.add_redact_annot(r_exp, fill=(249 / 255.0, 249 / 255.0, 249 / 255.0))
+    if found_tags:
+        page.apply_redactions()
+
     zoom = dpi / 72.0
     mat = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix=mat, alpha=False)
@@ -304,18 +318,49 @@ def health_check():
     }
 
 
+@app.post("/api/dataset/parse")
+async def parse_dataset_file(file: UploadFile = File(...)):
+    """
+    Parses an uploaded participant dataset file (.xlsx, .xls, .csv, .tsv, .json)
+    and returns detected columns, row count, and parsed records.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file has no filename.")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded dataset file is empty.")
+    try:
+        records = load_dataset(content_bytes=content, filename=file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse dataset: {str(e)}")
+
+    if not records:
+        raise HTTPException(status_code=400, detail="The uploaded dataset contains no valid data rows.")
+
+    columns = list(records[0].keys()) if records else []
+    return {
+        "ok": True,
+        "filename": file.filename,
+        "total_records": len(records),
+        "columns": columns,
+        "records": records,
+    }
+
+
 @app.post("/api/certificates/generate")
 @app.post("/certificate/batches/generate")
 async def generate_certificates(
     template: UploadFile = File(...),
-    participants: str = Form(...),
+    participants: Optional[str] = Form(None),
+    dataset: Optional[UploadFile] = File(None),
     format: str = Form("png"),
     send_emails: bool = Form(False),
     email_subject: Optional[str] = Form(None)
 ):
     """
     Generates batch certificates from uploaded Image (PNG/JPG) or PDF template
-    and mapped participants JSON. Uses concurrent thread workers for high speed.
+    and mapped participants JSON or dataset spreadsheet (.xlsx, .xls, .csv).
+    Uses concurrent thread workers for high speed.
     Optionally dispatches distinct emails with attachments.
     """
     # 1. Validate template format
@@ -346,13 +391,32 @@ async def generate_certificates(
     else:
         image_template_bytes = template_bytes
 
-    # 3. Parse participant JSON
-    try:
-        raw_participants = json.loads(participants)
-    except Exception as e:
+    # 3. Parse participant data from uploaded spreadsheet file OR form JSON string
+    raw_participants = []
+    if dataset is not None and dataset.filename:
+        dataset_bytes = await dataset.read()
+        if dataset_bytes:
+            try:
+                raw_participants = load_dataset(content_bytes=dataset_bytes, filename=dataset.filename)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to parse uploaded dataset spreadsheet '{dataset.filename}': {str(e)}"
+                )
+
+    if not raw_participants and participants:
+        try:
+            raw_participants = json.loads(participants)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid participant JSON data: {str(e)}"
+            )
+
+    if not raw_participants:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid participant JSON data: {str(e)}"
+            detail="Please provide participant data via 'participants' JSON or upload a 'dataset' spreadsheet (.xlsx, .xls, .csv)."
         )
 
     if not isinstance(raw_participants, list) or len(raw_participants) == 0:
