@@ -116,6 +116,9 @@ export default function CertificateList({
 
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
                   <div style={{ display: 'flex', gap: '6px' }}>
+                    <span className="badge badge-neutral" style={{ fontSize: '10px' }}>
+                      {item.filename?.toLowerCase().endsWith('.pdf') ? 'PDF' : 'PNG'}
+                    </span>
                     <span className={`badge ${item.status === 'Generated' ? 'badge-success' : 'badge-danger'}`}>
                       {item.status}
                     </span>

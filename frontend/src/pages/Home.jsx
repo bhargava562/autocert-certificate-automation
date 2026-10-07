@@ -30,6 +30,8 @@ export default function Home() {
     setSendEmails,
     emailSubject,
     setEmailSubject,
+    outputFormat,
+    setOutputFormat,
     emailStats,
     validation,
     setValidation,
@@ -183,6 +185,8 @@ export default function Home() {
               onSendEmailsChange={setSendEmails}
               emailSubject={emailSubject}
               onEmailSubjectChange={setEmailSubject}
+              outputFormat={outputFormat}
+              onOutputFormatChange={setOutputFormat}
             />
           )}
 
