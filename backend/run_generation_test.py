@@ -27,6 +27,7 @@ from app.services.engines.factory import CertificateEngineFactory
 from app.services.providers.local_provider import LocalTemplateProvider, LocalDiskSink
 from app.services.providers.supabase_provider import SupabaseTemplateProvider, SupabaseStorageSink
 from app.services.pipeline import CertificatePipeline
+from app.services.dataset_parser import load_dataset
 
 def build_manifest(template_filename: str, output_format: str = "png") -> TemplateManifest:
     """
@@ -170,33 +171,34 @@ def build_manifest(template_filename: str, output_format: str = "png") -> Templa
     return manifest
 
 def resolve_template_filename(templates_dir: str, requested: str = None) -> str:
-    """Finds matching template filename (image only) in templates directory."""
+    """Finds matching template filename (PDF or image) in templates directory."""
+    supported_exts = (".png", ".jpg", ".jpeg", ".pdf")
     if requested:
         if os.path.exists(os.path.join(templates_dir, requested)):
             return requested
         for fn in os.listdir(templates_dir):
-            if requested.lower() in fn.lower() and fn.lower().endswith((".png", ".jpg", ".jpeg")):
+            if requested.lower() in fn.lower() and fn.lower().endswith(supported_exts):
                 return fn
 
-    # Auto-detect: prefer White Green Completion template if present
-    available_pngs = [
+    # Auto-detect: search for both image and vector PDF templates
+    available_templates = [
         f for f in os.listdir(templates_dir)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
+        if f.lower().endswith(supported_exts)
         and os.path.isfile(os.path.join(templates_dir, f))
     ]
-    if not available_pngs:
-        raise FileNotFoundError(f"No image templates found in {templates_dir}")
+    if not available_templates:
+        raise FileNotFoundError(f"No certificate templates found in {templates_dir}")
 
-    # Priority: white-green > internship > first available
-    for fn in available_pngs:
+    # Priority: white-green completion > internship > first available
+    for fn in available_templates:
         fl = fn.lower()
         if "white" in fl or "green" in fl or "completion" in fl or "geometric" in fl:
             return fn
-    for fn in available_pngs:
+    for fn in available_templates:
         if "internship" in fn.lower():
             return fn
 
-    return available_pngs[0]
+    return available_templates[0]
 
 
 def normalize_participant(p: dict) -> dict:
@@ -221,14 +223,50 @@ def normalize_participant(p: dict) -> dict:
         "gender": p.get("gender") or "",
     }
 
-def run_pipeline(mode: str = "local", format_type: str = "png", template_name: str = None, clean: bool = True):
+def resolve_dataset_path(backend_path: str, requested: str = None) -> str:
+    """Resolves dataset file path, supporting .xlsx, .xls, .csv, and .json."""
+    if requested:
+        if os.path.exists(requested):
+            return os.path.abspath(requested)
+        sample_rel = os.path.join(backend_path, "sample_data", requested)
+        if os.path.exists(sample_rel):
+            return sample_rel
+        raise FileNotFoundError(f"Requested dataset file not found: {requested}")
+
+    # Auto-detect: prioritize Excel (.xlsx, .xls), then CSV, then JSON
+    sample_dir = os.path.join(backend_path, "sample_data")
+    candidates = [
+        "mock_participants.xlsx",
+        "mock_participants.xls",
+        "mock_participants.csv",
+        "mock_participants.json"
+    ]
+    for c in candidates:
+        full_p = os.path.join(sample_dir, c)
+        if os.path.isfile(full_p):
+            return full_p
+
+    # Fallback to any file in sample_data
+    for f in os.listdir(sample_dir):
+        if f.lower().endswith((".xlsx", ".xls", ".csv", ".json")):
+            return os.path.join(sample_dir, f)
+
+    raise FileNotFoundError(f"No participant dataset found in {sample_dir}")
+
+
+def run_pipeline(
+    mode: str = "local",
+    format_type: str = "png",
+    template_name: str = None,
+    dataset_name: str = None,
+    clean: bool = True
+):
     settings = load_settings()
     templates_dir = os.path.join(backend_dir, "sample_templates")
-    mock_data_path = os.path.join(backend_dir, "sample_data", "mock_participants.json")
 
     # Load participants and normalize to only required certificate fields
-    with open(mock_data_path, "r", encoding="utf-8") as f:
-        raw_participants = json.load(f)
+    resolved_data_path = resolve_dataset_path(backend_dir, dataset_name)
+    raw_participants = load_dataset(file_path=resolved_data_path)
     participants = [normalize_participant(p) for p in raw_participants]
 
     filename_target = resolve_template_filename(templates_dir, template_name)
@@ -241,6 +279,7 @@ def run_pipeline(mode: str = "local", format_type: str = "png", template_name: s
     print(f"AUTOCERT GENERATION PIPELINE - Mode: {mode.upper()} | Output Format: {resolved_format}")
     print("=" * 70)
     print(f"Active Master Template : {filename_target}")
+    print(f"Dataset Source         : {os.path.basename(resolved_data_path)} ({resolved_data_path})")
     print(f"Output Type            : All {'PDF Documents' if resolved_format == 'PDF' else 'PNG Images'} (Separate Generation)")
     print(f"Participants Count     : {len(participants)}")
     print()
@@ -299,7 +338,13 @@ def main():
     parser.add_argument(
         "--template",
         default=None,
-        help="Template name or keyword to test (e.g. 'internship', 'black_gold')"
+        help="Template name or keyword to test (e.g. 'internship', 'White Green Abstract Geometric Certificate of Completion.pdf')"
+    )
+    parser.add_argument(
+        "--data", "--dataset",
+        dest="dataset",
+        default=None,
+        help="Participant dataset file (supports .xlsx, .xls, .csv, .json)"
     )
     parser.add_argument(
         "--mode",
@@ -324,6 +369,7 @@ def main():
         mode=args.mode,
         format_type=chosen_fmt,
         template_name=args.template,
+        dataset_name=args.dataset,
         clean=not args.no_clean
     )
 

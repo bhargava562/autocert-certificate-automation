@@ -18,6 +18,8 @@ export default function DataMapping({
   onSendEmailsChange,
   emailSubject = '',
   onEmailSubjectChange,
+  outputFormat = 'png',
+  onOutputFormatChange,
 }) {
   const handleSelectChange = (systemKey, selectedColumn) => {
     onMappingChange({
@@ -94,10 +96,54 @@ export default function DataMapping({
         })}
       </div>
 
-      {/* Bulk Email Delivery Configuration Card */}
+      {/* Output Format Selector Card */}
       <div
         style={{
           marginTop: '20px',
+          padding: '16px',
+          background: 'rgba(59, 130, 246, 0.04)',
+          border: '1px solid rgba(59, 130, 246, 0.2)',
+          borderRadius: 'var(--radius-sm)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px'
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>Target Output Format</span>
+          </div>
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            Choose whether to generate in-browser PNG images or printable vector PDF documents
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            type="button"
+            className={outputFormat === 'png' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+            onClick={() => onOutputFormatChange && onOutputFormatChange('png')}
+            style={{ fontWeight: 600 }}
+          >
+            <span>PNG Images (.png)</span>
+          </button>
+          <button
+            type="button"
+            className={outputFormat === 'pdf' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+            onClick={() => onOutputFormatChange && onOutputFormatChange('pdf')}
+            style={{ fontWeight: 600 }}
+          >
+            <span>PDF Documents (.pdf)</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Bulk Email Delivery Configuration Card */}
+      <div
+        style={{
+          marginTop: '14px',
           padding: '16px',
           background: 'rgba(16, 185, 129, 0.04)',
           border: '1px solid rgba(16, 185, 129, 0.2)',
