@@ -8,9 +8,10 @@ export function useCertificateGeneration() {
   const [mapping, setMapping] = useState({});
   const [validation, setValidation] = useState({ isValid: false, blockingErrors: [] });
 
-  // Email delivery options
+  // Email & Format delivery options
   const [sendEmails, setSendEmails] = useState(false);
   const [emailSubject, setEmailSubject] = useState('');
+  const [outputFormat, setOutputFormat] = useState('png'); // 'png' or 'pdf'
   const [emailStats, setEmailStats] = useState({ sent: 0, failed: 0 });
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -85,7 +86,7 @@ export function useCertificateGeneration() {
       const response = await generateCertificatesApi({
         templateFile,
         participants: mappedParticipants,
-        format: 'png',
+        format: outputFormat,
         sendEmails,
         emailSubject: emailSubject || undefined,
       });
@@ -107,7 +108,7 @@ export function useCertificateGeneration() {
       setGenerationProgress('');
       setGenerationError(err.message || 'Certificate generation failed. Please check your uploaded data and try again.');
     }
-  }, [templateFile, uploadedData, mapping, validation, sendEmails, emailSubject]);
+  }, [templateFile, uploadedData, mapping, validation, sendEmails, emailSubject, outputFormat]);
 
   // Resend single email
   const handleResendEmail = useCallback(async (cert) => {
@@ -167,6 +168,8 @@ export function useCertificateGeneration() {
     setSendEmails,
     emailSubject,
     setEmailSubject,
+    outputFormat,
+    setOutputFormat,
     emailStats,
     validation,
     setValidation,
