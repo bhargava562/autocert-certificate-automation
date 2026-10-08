@@ -21,6 +21,22 @@ class PillowImageEngine:
         ext = filename_or_ext.lower().split(".")[-1]
         return ext in ("png", "jpg", "jpeg", "webp")
 
+    def _compute_effective_max_width(self, canvas_w: int, config) -> int:
+        """
+        Derives the effective maximum pixel width for text rendering.
+        When a clear_area is defined, uses it as the hard boundary to prevent
+        text from bleeding into adjacent fields. Otherwise falls back to max_w_pct.
+        """
+        max_w_from_pct = int(canvas_w * config.max_w_pct)
+        if config.clear_area:
+            clear_w = int(canvas_w * (config.clear_area[2] - config.clear_area[0]))
+            # Use whichever is larger to give the text room, but cap at clear_area
+            # width with a small inset (4% padding on each side) for visual breathing room
+            inset = max(4, int(clear_w * 0.04))
+            effective_w = clear_w - (inset * 2)
+            return max(effective_w, max_w_from_pct)
+        return max_w_from_pct
+
     def render(
         self,
         template_bytes: bytes,
@@ -69,7 +85,7 @@ class PillowImageEngine:
             if not text_str:
                 continue
 
-            max_width = int(canvas_w * config.max_w_pct)
+            max_width = self._compute_effective_max_width(canvas_w, config)
             target_size = max(10, int(canvas_h * config.font_size_pct))
             min_size = (
                 max(8, int(canvas_h * config.min_font_size_pct))
@@ -77,11 +93,62 @@ class PillowImageEngine:
                 else config.min_font_size
             )
 
-            # Handle multi-line vs single-line
-            if len(text_str) > 70 or "\n" in text_str or config.font_size_pct <= 0.020:
-                font = self.text_service.load_font(config.font_family, target_size)
-                lines = self.text_service.wrap_text(draw, text_str, font, max_width)
-                line_height = int(target_size * config.line_spacing)
+            # Determine if text should be rendered in multi-line wrapping mode
+            force_multiline = len(text_str) > 70 or "\n" in text_str or config.font_size_pct <= 0.020
+
+            if not force_multiline:
+                # Try single-line auto-scaled fit first
+                font, actual_size, text_w = self.text_service.fit_text_to_width(
+                    draw=draw,
+                    text=text_str,
+                    font_family=config.font_family,
+                    target_size=target_size,
+                    max_width=max_width,
+                    min_size=min_size
+                )
+
+                # If text still overflows at min_size, fall back to multi-line wrapping
+                if text_w > max_width:
+                    force_multiline = True
+
+            if force_multiline:
+                # Multi-line wrapping mode: auto-scale font then wrap into lines
+                # First try to fit at target_size with wrapping; if the wrapped font
+                # is still too large, scale down until wrapping produces a reasonable
+                # number of lines that fit within the clear_area height.
+                wrap_size = target_size
+                wrap_step = max(1, int(target_size * 0.05))
+                max_lines_allowed = 3  # Prevent excessive line count
+
+                if config.clear_area:
+                    clear_h_px = int(canvas_h * (config.clear_area[3] - config.clear_area[1]))
+                else:
+                    clear_h_px = int(canvas_h * 0.15)  # Reasonable default region height
+
+                best_font = None
+                best_lines = None
+                best_size = wrap_size
+
+                while wrap_size >= min_size:
+                    font = self.text_service.load_font(config.font_family, wrap_size)
+                    lines = self.text_service.wrap_text(draw, text_str, font, max_width)
+                    line_height = int(wrap_size * config.line_spacing)
+                    total_text_h = len(lines) * line_height
+
+                    if total_text_h <= clear_h_px and len(lines) <= max_lines_allowed:
+                        best_font = font
+                        best_lines = lines
+                        best_size = wrap_size
+                        break
+
+                    best_font = font
+                    best_lines = lines
+                    best_size = wrap_size
+                    wrap_size -= wrap_step
+
+                font = best_font or self.text_service.load_font(config.font_family, min_size)
+                lines = best_lines or self.text_service.wrap_text(draw, text_str, font, max_width)
+                line_height = int(best_size * config.line_spacing)
                 total_text_h = len(lines) * line_height
 
                 start_y = int(canvas_h * config.y_pct) - (total_text_h // 2)
@@ -104,15 +171,7 @@ class PillowImageEngine:
                     draw.text((line_x, curr_y), line, font=font, fill=config.color)
                     curr_y += line_height
             else:
-                font, actual_size, text_w = self.text_service.fit_text_to_width(
-                    draw=draw,
-                    text=text_str,
-                    font_family=config.font_family,
-                    target_size=target_size,
-                    max_width=max_width,
-                    min_size=min_size
-                )
-
+                # Single-line rendering: text fits within max_width at actual_size
                 if config.align == "center":
                     if config.clear_area:
                         box_center_x = (config.clear_area[0] + config.clear_area[2]) / 2.0 * canvas_w

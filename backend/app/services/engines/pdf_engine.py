@@ -104,11 +104,24 @@ class PyMuPdfEngine:
 
             # Proportional bounding box calculation
             if target_rect is None:
+                # Derive effective width: use clear_area as hard boundary when present
                 box_w = page_w * config.max_w_pct
+                if config.clear_area:
+                    clear_w = page_w * (config.clear_area[2] - config.clear_area[0])
+                    inset = max(2, clear_w * 0.04)
+                    effective_clear_w = clear_w - (inset * 2)
+                    box_w = max(box_w, effective_clear_w)
+
                 # Give multiline text larger bounding box
                 is_multiline = "\n" in text_str or len(text_str) > 60
                 height_factor = 2.4 if is_multiline else 1.6
                 box_h = page_h * (config.font_size_pct * height_factor)
+
+                # For long text that may need wrapping, increase the height
+                # to accommodate multiple lines within the bounding region
+                if config.clear_area and len(text_str) > 30:
+                    clear_h = page_h * (config.clear_area[3] - config.clear_area[1])
+                    box_h = max(box_h, clear_h * 0.85)
 
                 if config.align == "center":
                     x0 = (page_w - box_w) / 2
