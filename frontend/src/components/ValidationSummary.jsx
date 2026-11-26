@@ -1,7 +1,13 @@
 import React, { useMemo, useEffect } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
 
-export default function ValidationSummary({ records = [], mapping = {}, sendEmails = false, onValidationChange }) {
+export default function ValidationSummary({
+  records = [],
+  mapping = {},
+  placeholders = [],
+  sendEmails = false,
+  onValidationChange,
+}) {
   const validationResult = useMemo(() => {
     if (!records || records.length === 0) {
       return {
@@ -16,37 +22,58 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
       };
     }
 
-    const nameCol = mapping['full_name'];
+    const activeFields = placeholders && placeholders.length > 0 ? placeholders : [];
+    const explicitRequired = activeFields.filter((f) => f.required);
+    const requiredFields =
+      explicitRequired.length > 0
+        ? explicitRequired
+        : activeFields.length > 0
+          ? activeFields.filter((f) => f.key === 'full_name')
+          : [{ key: 'full_name', label: 'Recipient Name', required: true }];
+
+    const primaryField = requiredFields[0] || activeFields[0] || { key: 'full_name', label: 'Recipient Name' };
+    const primaryCol = mapping[primaryField.key];
     const emailCol = mapping['email'];
 
     const blockingErrors = [];
     const warnings = [];
 
-    if (!nameCol) {
-      blockingErrors.push('Recipient Name column is not mapped.');
+    if (requiredFields.length > 0) {
+      requiredFields.forEach((reqField) => {
+        if (!mapping[reqField.key]) {
+          blockingErrors.push(`${reqField.label || reqField.key} column is not mapped.`);
+        }
+      });
+    } else if (!Object.values(mapping).some(Boolean)) {
+      blockingErrors.push('At least one template placeholder column must be mapped.');
     }
+
     if (sendEmails && !emailCol) {
       blockingErrors.push('Recipient Email column must be mapped to dispatch emails via Gmail SMTP.');
     }
 
     let validCount = 0;
     let warningCount = 0;
-    let missingNameCount = 0;
+    let missingPrimaryCount = 0;
     let invalidEmailCount = 0;
     let missingOptionalCount = 0;
 
+    const optionalMappedKeys = (activeFields.length > 0
+      ? activeFields
+          .filter((f) => f.key !== primaryField.key && f.key !== 'email' && mapping[f.key])
+          .map((f) => f.key)
+      : ['achievement_text', 'achievement_title'].filter((k) => mapping[k]));
+
     records.forEach((row) => {
-      const nameVal = nameCol ? String(row[nameCol] || '').trim() : '';
+      const primaryVal = primaryCol ? String(row[primaryCol] || '').trim() : '';
       const emailVal = emailCol ? String(row[emailCol] || '').trim() : '';
 
       let hasWarning = false;
       let hasError = false;
 
-      if (!nameVal) {
+      if (primaryCol && !primaryVal) {
         hasError = true;
-        if (nameCol) {
-          missingNameCount++;
-        }
+        missingPrimaryCount++;
       }
 
       // Check email format if provided
@@ -55,8 +82,11 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
         invalidEmailCount++;
       }
 
-      // Check if optional certificate details are missing
-      if (!row[mapping['achievement_text']] && !row[mapping['achievement_title']]) {
+      // Check if optional mapped certificate details are missing
+      if (
+        optionalMappedKeys.length > 0 &&
+        optionalMappedKeys.every((key) => !String(row[mapping[key]] || '').trim())
+      ) {
         hasWarning = true;
         missingOptionalCount++;
       }
@@ -69,18 +99,18 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
       }
     });
 
-    if (nameCol && validCount === 0) {
-      blockingErrors.push('No records contain a valid Recipient Name.');
+    if (primaryCol && validCount === 0) {
+      blockingErrors.push(`No records contain a valid ${primaryField.label || primaryField.key}.`);
     }
 
-    if (missingNameCount > 0 && validCount > 0) {
-      warnings.push(`${missingNameCount} record(s) are missing a Recipient Name and will be skipped.`);
+    if (missingPrimaryCount > 0 && validCount > 0) {
+      warnings.push(`${missingPrimaryCount} record(s) are missing ${primaryField.label || primaryField.key} and will be skipped.`);
     }
     if (invalidEmailCount > 0) {
       warnings.push(`${invalidEmailCount} record(s) have an invalid email address format.`);
     }
     if (missingOptionalCount > 0) {
-      warnings.push(`${missingOptionalCount} record(s) are missing optional achievement title/text.`);
+      warnings.push(`${missingOptionalCount} record(s) are missing optional mapped placeholder details.`);
     }
 
     const isValid = blockingErrors.length === 0 && validCount > 0;
@@ -94,7 +124,7 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
       warnings,
       isValid,
     };
-  }, [records, mapping, sendEmails]);
+  }, [records, mapping, placeholders, sendEmails]);
 
   useEffect(() => {
     onValidationChange(validationResult);

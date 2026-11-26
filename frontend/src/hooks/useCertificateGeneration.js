@@ -1,13 +1,85 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import {
+  inspectTemplateApi,
   generateCertificatesApi,
   sendBatchEmailsApi,
   sendSingleEmailApi,
 } from '../services/certificateApi';
 import { SYSTEM_FIELDS } from '../components/DataMapping';
 
+const SYSTEM_SYNONYMS_BY_KEY = SYSTEM_FIELDS.reduce((acc, field) => {
+  acc[field.key] = field.synonyms || [];
+  return acc;
+}, {});
+
+function normalizeMatchText(value) {
+  return String(value || '')
+    .replace(/^\{\{|\}\}$|^\[\[|\]\]$/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_-]+/g, ' ');
+}
+
+function autoMatchColumns(fields, columns, previousMapping = {}) {
+  if (!columns || columns.length === 0) return {};
+
+  const activeFields = fields && fields.length > 0 ? fields : SYSTEM_FIELDS;
+  const newMapping = {};
+
+  const matchField = (field) => {
+    const existing = previousMapping[field.key];
+    if (existing && columns.includes(existing)) {
+      return existing;
+    }
+
+    const candidates = new Set([
+      normalizeMatchText(field.key),
+      normalizeMatchText(field.label),
+      normalizeMatchText(field.token),
+      ...(SYSTEM_SYNONYMS_BY_KEY[field.key] || []).map(normalizeMatchText),
+    ]);
+    candidates.delete('');
+
+    const matched = columns.find((col) => {
+      const colLower = col.toLowerCase().trim();
+      const colNorm = normalizeMatchText(col);
+      return (
+        candidates.has(colNorm) ||
+        (SYSTEM_SYNONYMS_BY_KEY[field.key] || []).some((syn) => syn.toLowerCase() === colLower)
+      );
+    });
+
+    return matched || '';
+  };
+
+  activeFields.forEach((field) => {
+    const matched = matchField(field);
+    if (matched) {
+      newMapping[field.key] = matched;
+    }
+  });
+
+  // Always auto-match email so bulk email delivery works even when {{email}} is not on the template
+  if (!newMapping.email) {
+    const emailField = SYSTEM_FIELDS.find((f) => f.key === 'email');
+    if (emailField) {
+      const matchedEmail = matchField(emailField);
+      if (matchedEmail) {
+        newMapping.email = matchedEmail;
+      }
+    }
+  }
+
+  return newMapping;
+}
+
 export function useCertificateGeneration() {
   const [templateFile, setTemplateFile] = useState(null);
+  const [extractedPlaceholders, setExtractedPlaceholders] = useState([]);
+  const [isInspectingTemplate, setIsInspectingTemplate] = useState(false);
+  const [templateInspectError, setTemplateInspectError] = useState('');
+  const inspectRequestIdRef = useRef(0);
+
   const [uploadedData, setUploadedData] = useState(null);
   const [mapping, setMapping] = useState({});
   const [validation, setValidation] = useState({ isValid: false, blockingErrors: [], warnings: [] });
@@ -28,24 +100,61 @@ export function useCertificateGeneration() {
   const [generatedCertificates, setGeneratedCertificates] = useState([]);
   const [selectedCertificate, setSelectedCertificate] = useState(null);
 
-  // Auto-match uploaded columns to system fields
-  const handleDataLoaded = useCallback(({ file, fileName, records, columns }) => {
-    setUploadedData({ file, fileName, records, columns });
+  // Inspect uploaded template for dynamic placeholders & styles
+  const handleTemplateSelected = useCallback(
+    async (file) => {
+      setTemplateFile(file || null);
+      setTemplateInspectError('');
 
-    const newMapping = {};
-    SYSTEM_FIELDS.forEach((sysField) => {
-      // Find matching column in uploaded columns
-      const matched = columns.find((col) => {
-        const cLower = col.toLowerCase().trim();
-        return sysField.synonyms.some((syn) => syn.toLowerCase() === cLower);
-      });
-      if (matched) {
-        newMapping[sysField.key] = matched;
+      if (!file) {
+        setExtractedPlaceholders([]);
+        setIsInspectingTemplate(false);
+        return;
       }
-    });
 
-    setMapping(newMapping);
-  }, []);
+      const requestId = ++inspectRequestIdRef.current;
+      setIsInspectingTemplate(true);
+
+      let nextPlaceholders = SYSTEM_FIELDS;
+      try {
+        const res = await inspectTemplateApi(file);
+        if (requestId !== inspectRequestIdRef.current) return;
+
+        const detected = Array.isArray(res?.extracted_placeholders) ? res.extracted_placeholders : [];
+        if (detected.length > 0) {
+          nextPlaceholders = detected;
+        } else {
+          nextPlaceholders = SYSTEM_FIELDS;
+        }
+      } catch (err) {
+        if (requestId !== inspectRequestIdRef.current) return;
+        setTemplateInspectError(err.message || 'Template inspection unavailable; using default fields.');
+        nextPlaceholders = SYSTEM_FIELDS;
+      } finally {
+        if (requestId === inspectRequestIdRef.current) {
+          setIsInspectingTemplate(false);
+        }
+      }
+
+      if (requestId !== inspectRequestIdRef.current) return;
+      setExtractedPlaceholders(nextPlaceholders);
+
+      if (uploadedData?.columns?.length > 0) {
+        setMapping((prev) => autoMatchColumns(nextPlaceholders, uploadedData.columns, prev));
+      }
+    },
+    [uploadedData]
+  );
+
+  // Auto-match uploaded columns to extracted placeholders / system fields
+  const handleDataLoaded = useCallback(
+    ({ file, fileName, records, columns }) => {
+      setUploadedData({ file, fileName, records, columns });
+      const activeFields = extractedPlaceholders.length > 0 ? extractedPlaceholders : SYSTEM_FIELDS;
+      setMapping(autoMatchColumns(activeFields, columns));
+    },
+    [extractedPlaceholders]
+  );
 
   const handleClearData = useCallback(() => {
     setUploadedData(null);
@@ -54,7 +163,11 @@ export function useCertificateGeneration() {
   }, []);
 
   const handleClearTemplate = useCallback(() => {
+    inspectRequestIdRef.current += 1;
     setTemplateFile(null);
+    setExtractedPlaceholders([]);
+    setIsInspectingTemplate(false);
+    setTemplateInspectError('');
   }, []);
 
   // Execute batch certificate generation
@@ -95,6 +208,7 @@ export function useCertificateGeneration() {
         format: outputFormat,
         sendEmails,
         emailSubject: emailSubject || undefined,
+        fieldMapping: mapping,
       });
 
       if (!response || !response.certificates || response.certificates.length === 0) {
@@ -247,6 +361,10 @@ export function useCertificateGeneration() {
   return {
     templateFile,
     setTemplateFile,
+    handleTemplateSelected,
+    extractedPlaceholders,
+    isInspectingTemplate,
+    templateInspectError,
     uploadedData,
     handleDataLoaded,
     handleClearData,

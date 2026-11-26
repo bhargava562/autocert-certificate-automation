@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, AlertTriangle, XCircle, Mail, Send } from 'lucide-react';
+import { Check, AlertTriangle, XCircle, Mail, Send, Loader2 } from 'lucide-react';
 
 export const SYSTEM_FIELDS = [
   { key: 'full_name', label: 'Recipient Name', required: true, synonyms: ['full_name', 'name', 'recipient_name', 'participant_name', 'student_name', 'student name (as per college id card)', 'student name'] },
@@ -14,6 +14,8 @@ export default function DataMapping({
   columns = [],
   mapping = {},
   onMappingChange,
+  placeholders = [],
+  isInspectingTemplate = false,
   sendEmails = false,
   onSendEmailsChange,
   emailSubject = '',
@@ -28,21 +30,31 @@ export default function DataMapping({
     });
   };
 
+  const fieldsToRender = placeholders && placeholders.length > 0 ? placeholders : SYSTEM_FIELDS;
+  const hasEmailInFields = fieldsToRender.some((f) => f.key === 'email');
   const isEmailMapped = Boolean(mapping.email && mapping.email !== '');
 
   return (
     <div className="mapping-section">
       <div className="mapping-header">
-        <h4 className="mapping-title">Dataset Column Mapping</h4>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <h4 className="mapping-title">Dataset Column Mapping</h4>
+          {isInspectingTemplate && (
+            <span style={{ fontSize: '12px', color: '#38bdf8', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+              <Loader2 size={13} className="spin" /> Inspecting template...
+            </span>
+          )}
+        </div>
         <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-          Map dynamic recipient columns from your uploaded dataset (Certificate IDs are auto-assigned)
+          Map detected template placeholders to columns from your uploaded dataset (Certificate IDs are auto-assigned)
         </span>
       </div>
 
       <div className="mapping-grid">
-        {SYSTEM_FIELDS.map((field) => {
+        {fieldsToRender.map((field) => {
           const mappedCol = mapping[field.key];
           const isMapped = Boolean(mappedCol && mappedCol !== '');
+          const isRequired = Boolean(field.required || (field.key === 'email' && sendEmails));
 
           let badge = null;
           if (isMapped) {
@@ -51,7 +63,7 @@ export default function DataMapping({
                 <Check size={12} /> Mapped
               </span>
             );
-          } else if (field.required || (field.key === 'email' && sendEmails)) {
+          } else if (isRequired) {
             badge = (
               <span className="badge badge-danger">
                 <XCircle size={12} /> {field.key === 'email' ? 'Required for Email' : 'Required'}
@@ -72,9 +84,53 @@ export default function DataMapping({
               style={field.key === 'email' && sendEmails && !isMapped ? { borderColor: 'rgba(239, 68, 68, 0.4)' } : {}}
             >
               <div className="mapping-label">
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                   {field.key === 'email' && <Mail size={13} color="#10b981" />}
-                  {field.label} {(field.required || (field.key === 'email' && sendEmails)) && <strong style={{ color: '#f87171' }}>*</strong>}
+                  <span>{field.label || field.key}</span>
+                  {isRequired && <strong style={{ color: '#f87171' }}>*</strong>}
+                  {field.token && (
+                    <code
+                      style={{
+                        fontSize: '11px',
+                        padding: '1px 6px',
+                        borderRadius: '4px',
+                        background: 'rgba(255, 255, 255, 0.07)',
+                        color: '#93c5fd',
+                      }}
+                    >
+                      {field.token}
+                    </code>
+                  )}
+                  {field.bold && (
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        padding: '1px 6px',
+                        borderRadius: '4px',
+                        background: 'rgba(139, 92, 246, 0.16)',
+                        color: '#c4b5fd',
+                        border: '1px solid rgba(139, 92, 246, 0.3)',
+                      }}
+                    >
+                      Bold
+                    </span>
+                  )}
+                  {field.italic && (
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        fontStyle: 'italic',
+                        padding: '1px 6px',
+                        borderRadius: '4px',
+                        background: 'rgba(59, 130, 246, 0.16)',
+                        color: '#93c5fd',
+                        border: '1px solid rgba(59, 130, 246, 0.3)',
+                      }}
+                    >
+                      Italic
+                    </span>
+                  )}
                 </span>
                 {badge}
               </div>
@@ -170,7 +226,28 @@ export default function DataMapping({
         </div>
 
         {sendEmails && (
-          <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+          <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {!hasEmailInFields && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Mail size={13} color="#10b981" />
+                  <span>Recipient Email Column <strong style={{ color: '#f87171' }}>*</strong></span>
+                </label>
+                <select
+                  className="mapping-select"
+                  value={mapping.email || ''}
+                  onChange={(e) => handleSelectChange('email', e.target.value)}
+                >
+                  <option value="">-- Select uploaded email column --</option>
+                  {columns.map((col) => (
+                    <option key={col} value={col}>
+                      {col}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
                 Email Subject Line (Optional — defaults to official certificate subject):

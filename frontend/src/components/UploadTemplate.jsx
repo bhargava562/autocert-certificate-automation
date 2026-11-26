@@ -1,7 +1,14 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Image as ImageIcon, FileText, CheckCircle, RefreshCw, UploadCloud } from 'lucide-react';
+import { Image as ImageIcon, FileText, CheckCircle, RefreshCw, UploadCloud, Loader2, Sparkles, AlertTriangle } from 'lucide-react';
 
-export default function UploadTemplate({ templateFile, onTemplateSelected, onClearTemplate }) {
+export default function UploadTemplate({
+  templateFile,
+  onTemplateSelected,
+  onClearTemplate,
+  extractedPlaceholders = [],
+  isInspectingTemplate = false,
+  templateInspectError = '',
+}) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [isPdf, setIsPdf] = useState(false);
@@ -119,6 +126,87 @@ export default function UploadTemplate({ templateFile, onTemplateSelected, onCle
             {isPdf ? <FileText size={15} /> : <CheckCircle size={15} />}
             <span>✓ {templateFile.name} ({(templateFile.size / 1024).toFixed(1)} KB)</span>
           </div>
+
+          {isInspectingTemplate && (
+            <div
+              style={{
+                marginTop: '8px',
+                fontSize: '12px',
+                color: 'var(--text-secondary)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <Loader2 size={13} className="spin" />
+              <span>Scanning template placeholders...</span>
+            </div>
+          )}
+
+          {!isInspectingTemplate && extractedPlaceholders.length > 0 && (
+            <div
+              style={{
+                marginTop: '8px',
+                padding: '6px 10px',
+                borderRadius: '6px',
+                background: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.25)',
+                fontSize: '11px',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '5px',
+                  fontWeight: 600,
+                  color: '#34d399',
+                  marginBottom: '4px',
+                }}
+              >
+                <Sparkles size={12} />
+                <span>{extractedPlaceholders.length} Placeholder(s) Ready for Mapping</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '4px' }}>
+                {extractedPlaceholders.map((p) => (
+                  <span
+                    key={p.key}
+                    style={{
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      color: 'var(--text-primary)',
+                      fontFamily: 'monospace',
+                    }}
+                  >
+                    {p.token || `{{${p.key}}}`}
+                    {p.bold ? ' · B' : ''}
+                    {p.italic ? ' · I' : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!isInspectingTemplate && templateInspectError && (
+            <div
+              style={{
+                marginTop: '6px',
+                fontSize: '11px',
+                color: '#fbbf24',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+              }}
+            >
+              <AlertTriangle size={12} />
+              <span>Using default fields ({templateInspectError})</span>
+            </div>
+          )}
+
           <div style={{ marginTop: '10px' }}>
             <button type="button" className="btn-secondary btn-sm" onClick={handleReplace}>
               <RefreshCw size={13} />

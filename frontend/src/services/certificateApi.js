@@ -25,12 +25,29 @@ export async function checkBackendHealth() {
   }
 }
 
+export async function inspectTemplateApi(templateFile) {
+  const formData = new FormData();
+  formData.append('template', templateFile);
+
+  const res = await fetch(`${API_BASE_URL}/api/templates/inspect`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!res.ok) {
+    throw new Error(await parseErrorResponse(res, 'Template inspection failed'));
+  }
+
+  return await res.json();
+}
+
 export async function generateCertificatesApi({
   templateFile,
   participants,
   format = 'png',
   sendEmails = false,
   emailSubject = '',
+  fieldMapping = null,
 }) {
   const formData = new FormData();
   formData.append('template', templateFile);
@@ -39,6 +56,9 @@ export async function generateCertificatesApi({
   formData.append('send_emails', String(sendEmails));
   if (emailSubject) {
     formData.append('email_subject', emailSubject);
+  }
+  if (fieldMapping && Object.keys(fieldMapping).length > 0) {
+    formData.append('field_mapping', JSON.stringify(fieldMapping));
   }
 
   const res = await fetch(`${API_BASE_URL}/api/certificates/generate`, {

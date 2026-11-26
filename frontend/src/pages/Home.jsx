@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PlusCircle, ChevronUp, ChevronDown, Award, Mail, FileSpreadsheet, Layers, Send, CheckCircle } from 'lucide-react';
+import { PlusCircle, ChevronUp, ChevronDown, Award, FileSpreadsheet, Layers, Send, AlertTriangle, Loader2 } from 'lucide-react';
 import Header from '../components/Header';
 import EmptyState from '../components/EmptyState';
 import UploadTemplate from '../components/UploadTemplate';
@@ -16,10 +16,14 @@ import { checkBackendHealth } from '../services/certificateApi';
 export default function Home() {
   const [backendConnected, setBackendConnected] = useState(true);
   const [isWorkflowOpen, setIsWorkflowOpen] = useState(false);
+  const [batchEmailNotice, setBatchEmailNotice] = useState(null);
 
   const {
     templateFile,
-    setTemplateFile,
+    handleTemplateSelected,
+    extractedPlaceholders,
+    isInspectingTemplate,
+    templateInspectError,
     uploadedData,
     handleDataLoaded,
     handleClearData,
@@ -33,6 +37,7 @@ export default function Home() {
     outputFormat,
     setOutputFormat,
     emailStats,
+    isSendingBatchEmails,
     validation,
     setValidation,
     isGenerating,
@@ -42,6 +47,7 @@ export default function Home() {
     selectedCertificate,
     setSelectedCertificate,
     handleGenerate,
+    handleSendBatchEmails,
     handleResendEmail,
   } = useCertificateGeneration();
 
@@ -163,8 +169,11 @@ export default function Home() {
           <div className="upload-grid">
             <UploadTemplate
               templateFile={templateFile}
-              onTemplateSelected={setTemplateFile}
+              onTemplateSelected={handleTemplateSelected}
               onClearTemplate={handleClearTemplate}
+              extractedPlaceholders={extractedPlaceholders}
+              isInspectingTemplate={isInspectingTemplate}
+              templateInspectError={templateInspectError}
             />
 
             <UploadData
@@ -181,6 +190,8 @@ export default function Home() {
               columns={uploadedData.columns}
               mapping={mapping}
               onMappingChange={setMapping}
+              placeholders={extractedPlaceholders}
+              isInspectingTemplate={isInspectingTemplate}
               sendEmails={sendEmails}
               onSendEmailsChange={setSendEmails}
               emailSubject={emailSubject}
@@ -195,6 +206,7 @@ export default function Home() {
             <ValidationSummary
               records={uploadedData.records}
               mapping={mapping}
+              placeholders={extractedPlaceholders}
               sendEmails={sendEmails}
               onValidationChange={setValidation}
             />
@@ -220,15 +232,84 @@ export default function Home() {
 
       {/* 5. Generated Certificates Section */}
       <section style={{ marginTop: '36px' }}>
-        <div className="generated-section-header">
+        <div className="generated-section-header" style={{ flexWrap: 'wrap', gap: '12px' }}>
           <h2 className="section-title">Generated Certificates</h2>
-          {generatedCertificates.length > 0 && (
-            <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-              Total: {generatedCertificates.length} certificate(s) generated
-              {emailStats.sent > 0 && ` • ${emailStats.sent} email(s) dispatched`}
-            </span>
-          )}
+          {generatedCertificates.length > 0 && (() => {
+            const overflowCount = generatedCertificates.filter((c) => c.overflowed).length;
+            const pendingEmailCount = generatedCertificates.filter(
+              (c) => c.status === 'Generated' && c.email && c.filename && c.email_status !== 'Sent'
+            ).length;
+
+            const onDispatchBatchEmails = async () => {
+              setBatchEmailNotice(null);
+              try {
+                const res = await handleSendBatchEmails();
+                setBatchEmailNotice({
+                  type: 'success',
+                  text: `Batch email dispatch finished: ${res?.sent_count ?? 0} sent, ${res?.failed_count ?? 0} failed.`,
+                });
+              } catch (err) {
+                setBatchEmailNotice({
+                  type: 'error',
+                  text: err.message || 'Batch email dispatch failed.',
+                });
+              }
+            };
+
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  Total: {generatedCertificates.length} certificate(s) generated
+                  {emailStats.sent > 0 && ` • ${emailStats.sent} email(s) dispatched`}
+                </span>
+                {overflowCount > 0 && (
+                  <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                    <AlertTriangle size={13} />
+                    {overflowCount} overflow warning(s)
+                  </span>
+                )}
+                {pendingEmailCount > 0 && (
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    disabled={isSendingBatchEmails}
+                    onClick={onDispatchBatchEmails}
+                  >
+                    {isSendingBatchEmails ? <Loader2 size={14} className="spin" /> : <Send size={14} />}
+                    <span>
+                      {isSendingBatchEmails
+                        ? 'Sending Batch Emails...'
+                        : `Send Batch Emails (${pendingEmailCount})`}
+                    </span>
+                  </button>
+                )}
+              </div>
+            );
+          })()}
         </div>
+
+        {batchEmailNotice && (
+          <div
+            role="status"
+            style={{
+              marginBottom: '14px',
+              padding: '10px 14px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              background:
+                batchEmailNotice.type === 'error'
+                  ? 'rgba(239, 68, 68, 0.1)'
+                  : 'rgba(16, 185, 129, 0.1)',
+              border:
+                batchEmailNotice.type === 'error'
+                  ? '1px solid rgba(239, 68, 68, 0.3)'
+                  : '1px solid rgba(16, 185, 129, 0.3)',
+              color: batchEmailNotice.type === 'error' ? '#f87171' : '#34d399',
+            }}
+          >
+            {batchEmailNotice.text}
+          </div>
+        )}
 
         {/* Initially empty: Show EmptyState */}
         {generatedCertificates.length === 0 ? (
