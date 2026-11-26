@@ -16,48 +16,91 @@ class TextFittingService:
             os.path.dirname(__file__), "..", "..", "assets", "fonts"
         )
         self._font_cache = {}
+        self._font_path_cache = {}
 
-    def get_font_path(self, font_family: str) -> Optional[str]:
-        """Resolves font path from custom assets, Windows system fonts, or fallbacks, honoring bold weight."""
-        font_family = font_family.lower()
-        wants_bold = "bold" in font_family
+    def get_font_path(self, font_family: str, bold: bool = False, italic: bool = False) -> Optional[str]:
+        """Resolves font path from custom assets, Windows system fonts, or fallbacks, honoring bold/italic."""
+        fam = (font_family or "sans-serif").lower()
+        wants_bold = bool(bold) or ("bold" in fam)
+        wants_italic = bool(italic) or ("italic" in fam) or ("oblique" in fam)
+
+        cache_key = (fam, wants_bold, wants_italic)
+        if cache_key in self._font_path_cache:
+            return self._font_path_cache[cache_key]
+
+        resolved: Optional[str] = None
 
         # 1. Check custom assets folder
         if os.path.exists(self.custom_font_dir):
-            files = [fn for fn in os.listdir(self.custom_font_dir) if fn.endswith((".ttf", ".otf"))]
-            if wants_bold:
+            files = [fn for fn in os.listdir(self.custom_font_dir) if fn.lower().endswith((".ttf", ".otf"))]
+            base_fam = fam.replace("-bold", "").replace("-italic", "").replace("bold", "").replace("italic", "").strip()
+            for fn in files:
+                fn_l = fn.lower()
+                is_bd = "bold" in fn_l or "bd" in fn_l
+                is_it = "italic" in fn_l or "oblique" in fn_l
+                fam_match = (base_fam and base_fam in fn_l) or ("sans" in fam and "sans" in fn_l)
+                if fam_match and is_bd == wants_bold and is_it == wants_italic:
+                    resolved = os.path.join(self.custom_font_dir, fn)
+                    break
+            if not resolved and wants_bold:
                 for fn in files:
                     fn_l = fn.lower()
-                    if "bold" in fn_l and (font_family.replace("-bold", "").replace("bold", "").strip() in fn_l or "sans" in font_family):
-                        return os.path.join(self.custom_font_dir, fn)
-            for fn in files:
-                if font_family in fn.lower():
-                    return os.path.join(self.custom_font_dir, fn)
+                    if "bold" in fn_l and ((base_fam and base_fam in fn_l) or "sans" in fam):
+                        resolved = os.path.join(self.custom_font_dir, fn)
+                        break
+            if not resolved:
+                for fn in files:
+                    if fam in fn.lower() or (base_fam and base_fam in fn.lower()):
+                        resolved = os.path.join(self.custom_font_dir, fn)
+                        break
 
         # 2. Check Windows System Fonts
         win_fonts = r"C:\Windows\Fonts"
-        if os.path.exists(win_fonts):
-            if "script" in font_family or "cursive" in font_family:
-                candidates = ["segoescb.ttf", "segoesc.ttf", "FRSCRIPT.TTF", "SCRIPTBL.TTF", "georgia.ttf"] if wants_bold else ["segoesc.ttf", "FRSCRIPT.TTF", "SCRIPTBL.TTF", "georgia.ttf"]
-            elif "serif" in font_family or "times" in font_family or "cinzel" in font_family:
-                candidates = ["timesbd.ttf", "georgiab.ttf", "times.ttf", "georgia.ttf", "pala.ttf"] if wants_bold else ["times.ttf", "georgia.ttf", "pala.ttf", "arial.ttf"]
+        if not resolved and os.path.exists(win_fonts):
+            if "script" in fam or "cursive" in fam:
+                if wants_bold and wants_italic:
+                    candidates = ["segoescb.ttf", "timesbi.ttf", "georgiabi.ttf", "segoesc.ttf"]
+                elif wants_bold:
+                    candidates = ["segoescb.ttf", "SCRIPTBL.TTF", "segoesc.ttf", "FRSCRIPT.TTF", "georgiab.ttf"]
+                elif wants_italic:
+                    candidates = ["segoesc.ttf", "FRSCRIPT.TTF", "georgiai.ttf", "timesi.ttf"]
+                else:
+                    candidates = ["segoesc.ttf", "FRSCRIPT.TTF", "SCRIPTBL.TTF", "georgia.ttf"]
+            elif "serif" in fam or "times" in fam or "cinzel" in fam or "georgia" in fam:
+                if wants_bold and wants_italic:
+                    candidates = ["timesbi.ttf", "georgiabi.ttf", "palabi.ttf", "timesbd.ttf", "times.ttf"]
+                elif wants_bold:
+                    candidates = ["timesbd.ttf", "georgiab.ttf", "palab.ttf", "times.ttf", "georgia.ttf"]
+                elif wants_italic:
+                    candidates = ["timesi.ttf", "georgiai.ttf", "palai.ttf", "times.ttf", "georgia.ttf"]
+                else:
+                    candidates = ["times.ttf", "georgia.ttf", "pala.ttf", "arial.ttf"]
             else:
-                candidates = ["arialbd.ttf", "calibrib.ttf", "segoeuib.ttf", "arial.ttf", "calibri.ttf", "segoeui.ttf"] if wants_bold else ["arial.ttf", "calibri.ttf", "segoeui.ttf"]
+                if wants_bold and wants_italic:
+                    candidates = ["arialbi.ttf", "calibriz.ttf", "segoeuiz.ttf", "arialbd.ttf", "ariali.ttf", "arial.ttf"]
+                elif wants_bold:
+                    candidates = ["arialbd.ttf", "calibrib.ttf", "segoeuib.ttf", "arial.ttf", "calibri.ttf", "segoeui.ttf"]
+                elif wants_italic:
+                    candidates = ["ariali.ttf", "calibrii.ttf", "segoeuii.ttf", "arial.ttf", "calibri.ttf", "segoeui.ttf"]
+                else:
+                    candidates = ["arial.ttf", "calibri.ttf", "segoeui.ttf"]
 
             for cand in candidates:
                 cand_path = os.path.join(win_fonts, cand)
                 if os.path.exists(cand_path):
-                    return cand_path
+                    resolved = cand_path
+                    break
 
-        return None
+        self._font_path_cache[cache_key] = resolved
+        return resolved
 
-    def load_font(self, font_family: str, size: int) -> ImageFont.FreeTypeFont:
-        """Loads a font at the requested size, falling back safely if not found"""
-        cache_key = (font_family, size)
+    def load_font(self, font_family: str, size: int, bold: bool = False, italic: bool = False) -> ImageFont.FreeTypeFont:
+        """Loads a font at the requested size and style, falling back safely if not found"""
+        cache_key = (font_family, size, bool(bold), bool(italic))
         if cache_key in self._font_cache:
             return self._font_cache[cache_key]
 
-        font_path = self.get_font_path(font_family)
+        font_path = self.get_font_path(font_family, bold=bold, italic=italic)
         if font_path and os.path.exists(font_path):
             try:
                 font = ImageFont.truetype(font_path, size)
@@ -114,14 +157,16 @@ class TextFittingService:
         font_family: str,
         target_size: int,
         max_width: int,
-        min_size: int = 18
+        min_size: int = 18,
+        bold: bool = False,
+        italic: bool = False,
     ) -> Tuple[ImageFont.FreeTypeFont, int, int]:
         """
         Dynamically auto-scales font size using binary search until text fits within max_width.
         Returns: (fitted_font, actual_font_size, text_width)
         """
         def _measure(txt: str, sz: int) -> int:
-            font = self.load_font(font_family, sz)
+            font = self.load_font(font_family, sz, bold=bold, italic=italic)
             bbox = draw.textbbox((0, 0), txt, font=font)
             return bbox[2] - bbox[0]
 
@@ -132,7 +177,7 @@ class TextFittingService:
             min_font=min_size,
             max_font=max(min_size, target_size),
         )
-        return self.load_font(font_family, best_size), best_size, best_width
+        return self.load_font(font_family, best_size, bold=bold, italic=italic), best_size, best_width
 
     def measure_text_width(
         self,
@@ -235,6 +280,8 @@ class TextFittingService:
         overflow_policy: str = "shrink_wrap",
         force_multiline: bool = False,
         field_name: str = "field",
+        bold: bool = False,
+        italic: bool = False,
     ) -> Tuple[ImageFont.FreeTypeFont, int, List[str], int, bool, List[str]]:
         """
         Fits text into a (max_width, max_height, max_lines) bounding box.
@@ -252,6 +299,8 @@ class TextFittingService:
                 target_size=target_size,
                 max_width=max_width,
                 min_size=min_size,
+                bold=bold,
+                italic=italic,
             )
             line_height = max(1, int(actual_size * line_spacing))
             if text_w <= max_width and (max_height is None or line_height <= max_height):
@@ -263,12 +312,12 @@ class TextFittingService:
                 while size >= min_size:
                     lh = max(1, int(size * line_spacing))
                     if lh <= max_height:
-                        return self.load_font(font_family, size), size, [text], lh, False, []
+                        return self.load_font(font_family, size, bold=bold, italic=italic), size, [text], lh, False, []
                     size -= step
 
         # 2. If single-line is strictly required under flag_overflow, flag immediately
         if policy == "flag_overflow" and allowed_lines == 1:
-            font = self.load_font(font_family, min_size)
+            font = self.load_font(font_family, min_size, bold=bold, italic=italic)
             line_height = max(1, int(min_size * line_spacing))
             warning = f"Field '{field_name}' exceeds single-line bounds at min font size ({min_size}px)"
             return font, min_size, [text], line_height, True, [warning]
@@ -278,7 +327,7 @@ class TextFittingService:
         wrap_step = max(1, int(target_size * 0.04))
 
         while wrap_size >= min_size:
-            font = self.load_font(font_family, wrap_size)
+            font = self.load_font(font_family, wrap_size, bold=bold, italic=italic)
             lines = self.wrap_text(draw, text, font, max_width)
             line_height = max(1, int(wrap_size * line_spacing))
             total_text_h = len(lines) * line_height
@@ -293,7 +342,7 @@ class TextFittingService:
             wrap_size -= wrap_step
 
         # 4. Re-evaluate exactly at min_size
-        font = self.load_font(font_family, min_size)
+        font = self.load_font(font_family, min_size, bold=bold, italic=italic)
         lines = self.wrap_text(draw, text, font, max_width)
         line_height = max(1, int(min_size * line_spacing))
         total_text_h = len(lines) * line_height

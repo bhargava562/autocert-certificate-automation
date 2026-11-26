@@ -122,11 +122,12 @@ class PyMuPdfEngine:
                 page.add_redact_annot(clear_r, fill=bg_color)
                 has_redactions = True
 
-        # 2. Defensively redact curly-brace placeholder tags without clipping adjacent static words
+        # 2. Defensively redact placeholder tags without clipping adjacent static words
         page_text = page.get_text()
-        found_tags = set(re.findall(r"\{\{([^}]+)\}\}", page_text))
-        for tag in found_tags:
-            tag_str = f"{{{{{tag}}}}}"
+        found_tags = set(
+            re.findall(r"(\{\{[^}]+\}\}|\[\[[^\]]+\]\]|\[(?:name|year|dept|title)\]|<(?:name|year|dept)>)", page_text, re.IGNORECASE)
+        )
+        for tag_str in found_tags:
             occurrences = page.search_for(tag_str)
             for occ in occurrences:
                 # Inset slightly so adjacent static text (e.g., '{{year}}Year') is never clipped
@@ -193,15 +194,30 @@ class PyMuPdfEngine:
             else:
                 x0 = anchor_x0
 
-            # Font selection (honor bold weight explicitly)
+            # Font selection (honor bold and italic styles explicitly)
             fam = (config.font_family or "").lower()
-            wants_bold = "bold" in fam
-            if "serif" in fam:
-                font_choice = "tibo" if wants_bold else "tiro"
-            elif "script" in fam:
+            wants_bold = bool(getattr(config, "bold", False)) or ("bold" in fam)
+            wants_italic = bool(getattr(config, "italic", False)) or ("italic" in fam) or ("oblique" in fam)
+            if "serif" in fam or "times" in fam:
+                if wants_bold and wants_italic:
+                    font_choice = "tibi"
+                elif wants_bold:
+                    font_choice = "tibo"
+                elif wants_italic:
+                    font_choice = "tiit"
+                else:
+                    font_choice = "tiro"
+            elif "script" in fam or "cursive" in fam:
                 font_choice = "tibi" if wants_bold else "tiit"
             else:
-                font_choice = "hebo" if wants_bold else "helv"
+                if wants_bold and wants_italic:
+                    font_choice = "hebi"
+                elif wants_bold:
+                    font_choice = "hebo"
+                elif wants_italic:
+                    font_choice = "heit"
+                else:
+                    font_choice = "helv"
 
             align_val = 1 if config.align == "center" else (2 if config.align == "right" else 0)
             color_tuple = _parse_hex_color(config.color)

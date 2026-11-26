@@ -112,6 +112,8 @@ class PillowImageEngine:
             overflow_policy = getattr(config, "overflow_policy", "shrink_wrap")
 
             force_multiline = len(text_str) > 70 or "\n" in text_str or config.font_size_pct <= 0.020
+            wants_bold = bool(getattr(config, "bold", False))
+            wants_italic = bool(getattr(config, "italic", False))
 
             font, actual_size, lines, line_height, field_overflowed, field_warnings = (
                 self.text_service.fit_text_block(
@@ -127,6 +129,8 @@ class PillowImageEngine:
                     overflow_policy=overflow_policy,
                     force_multiline=force_multiline,
                     field_name=field_name,
+                    bold=wants_bold,
+                    italic=wants_italic,
                 )
             )
 

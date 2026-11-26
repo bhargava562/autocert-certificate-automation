@@ -25,6 +25,10 @@ class FieldConfig:
     anchor_phrase: Optional[str] = None  # For PDF structural text detection
     clear_area: Optional[Tuple[float, float, float, float]] = None # (x1_pct, y1_pct, x2_pct, y2_pct)
     clear_bg_color: Optional[str] = None # Fill color to wipe clear_area before rendering (e.g. "#FFFFFF")
+    bold: bool = False
+    italic: bool = False
+    token: Optional[str] = None
+    required: bool = False
 
 @dataclass
 class TemplateManifest:
