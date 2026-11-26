@@ -70,7 +70,7 @@ class TestDatasetParsing:
             "Annual Tech Summit 2026\n"
             "\n"
             "  Full Name  , Email , Department , Year \n"
-            "  Alice   Johnson \n , alice@example.com ,  Computer\nScience , 2026 \n"
+            '"  Alice   Johnson \n ",alice@example.com,"  Computer\nScience ",2026\n'
             "  Bob Smith , , Mechanical , 2025 \n"
             ",,,\n"
         )
@@ -162,7 +162,13 @@ class TestTemplatePlaceholderExtraction:
         page = doc.new_page(width=842, height=595)
 
         # Diagonal watermark that must be ignored
-        page.insert_text((200, 350), "{{watermark_fake}}", fontsize=40, rotate=45, color=(0.8, 0.8, 0.8))
+        page.insert_text(
+            (200, 350),
+            "{{watermark_fake}}",
+            fontsize=40,
+            morph=(fitz.Point(200, 350), fitz.Matrix(45)),
+            color=(0.8, 0.8, 0.8),
+        )
 
         # Bold placeholder
         page.insert_text((250, 220), "{{name}}", fontsize=28, fontname="hebo", color=(0.1, 0.2, 0.4))
@@ -410,6 +416,11 @@ class TestApiEndpointsAndSecurity:
             f.write(_make_png_template(400, 300))
 
         fake_settings = Settings(
+            supabase_url=None,
+            supabase_publishable_key=None,
+            supabase_anon_key=None,
+            supabase_service_key=None,
+            database_url=None,
             smtp_host="smtp.example.com",
             smtp_port=587,
             smtp_user="sender@example.com",
