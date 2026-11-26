@@ -42,6 +42,8 @@ class Settings:
     smtp_timeout_seconds: int = 30
     default_min_font_size_pct: float = 0.015
     default_max_lines: int = 3
+    max_upload_mb: int = 25
+    email_max_retries: int = 2
 
 def load_settings(env_path: Optional[str] = None) -> Settings:
     if env_path is None:
@@ -79,4 +81,6 @@ def load_settings(env_path: Optional[str] = None) -> Settings:
             env.get("DEFAULT_MIN_FONT_SIZE_PCT") or os.getenv("DEFAULT_MIN_FONT_SIZE_PCT") or 0.015
         ),
         default_max_lines=int(env.get("DEFAULT_MAX_LINES") or os.getenv("DEFAULT_MAX_LINES") or 3),
+        max_upload_mb=max(1, int(env.get("MAX_UPLOAD_MB") or os.getenv("MAX_UPLOAD_MB") or 25)),
+        email_max_retries=max(0, int(env.get("EMAIL_MAX_RETRIES") or os.getenv("EMAIL_MAX_RETRIES") or 2)),
     )

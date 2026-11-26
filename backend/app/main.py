@@ -9,6 +9,7 @@ Provides endpoints for:
 
 import os
 import io
+import html
 import time
 import json
 import uuid
@@ -33,6 +34,7 @@ from .services.protocols import CertificateEngine
 from .services.text_fitting import TextFittingService
 from .services.engines.image_engine import PillowImageEngine
 from .services.engines.pdf_engine import PyMuPdfEngine
+from .services import template_scanner
 from .services.template_scanner import scan_template_placeholders
 from .services.dataset_parser import load_dataset
 
@@ -63,12 +65,70 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 _SENT_EMAIL_IDEMPOTENCY_KEYS: Set[Tuple[str, str]] = set()
 _SENT_EMAIL_LOCK = threading.Lock()
 
+ALLOWED_TEMPLATE_EXTENSIONS = ("png", "jpg", "jpeg", "pdf")
+ALLOWED_DATASET_EXTENSIONS = ("xlsx", "xls", "xlsm", "xltx", "csv", "tsv", "json")
+_EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$")
+
+
+def _is_valid_email(email: Optional[str]) -> bool:
+    """Validates recipient email format."""
+    if not email or not isinstance(email, str):
+        return False
+    cleaned = email.strip()
+    return len(cleaned) <= 254 and bool(_EMAIL_RE.match(cleaned))
+
+
+def _validate_upload_file(
+    filename: Optional[str],
+    content: bytes,
+    allowed_exts: Tuple[str, ...],
+    max_upload_mb: int,
+    label: str = "file",
+) -> str:
+    """Validates upload filename extension, non-empty payload, and max size limit."""
+    if not filename or "." not in filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Uploaded {label} must have a valid filename and extension.",
+        )
+    ext = filename.rsplit(".", 1)[-1].lower().strip()
+    if ext not in allowed_exts:
+        allowed_str = ", ".join(f".{e}" for e in allowed_exts)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported {label} format '.{ext}'. Allowed formats: {allowed_str}.",
+        )
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Uploaded {label} file is empty.",
+        )
+    max_bytes = max(1, int(max_upload_mb)) * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Uploaded {label} exceeds maximum allowed size of {max_upload_mb} MB.",
+        )
+    return ext
+
 
 def _is_safe_path_segment(segment: str) -> bool:
     """Validates that a path segment is non-empty and contains no traversal characters."""
-    if not segment or segment in (".", ".."):
+    if not segment or segment in (".", "..") or ".." in segment:
+        return False
+    if "\x00" in segment or ":" in segment or os.path.isabs(segment):
         return False
     return "/" not in segment and "\\" not in segment and os.path.basename(segment) == segment
+
+
+def _is_within_output_dir(candidate: str, output_root: str) -> bool:
+    """Verifies using os.path.commonpath that candidate resolves strictly inside output_root."""
+    real_root = os.path.realpath(output_root)
+    real_candidate = os.path.realpath(candidate)
+    try:
+        return os.path.commonpath([real_root, real_candidate]) == real_root and real_candidate != real_root
+    except ValueError:
+        return False
 
 
 def _resolve_certificate_path(filename: str, batch_id: Optional[str] = None) -> Optional[str]:
@@ -77,44 +137,44 @@ def _resolve_certificate_path(filename: str, batch_id: Optional[str] = None) -> 
     Supports explicit batch_id, 'batch_id/filename' relative paths, direct files in OUTPUT_DIR,
     and searching batch subdirectories (newest first) by filename.
     """
-    if not filename:
+    if not filename or "\x00" in filename or ":" in filename or os.path.isabs(filename):
         return None
 
-    output_root = os.path.abspath(OUTPUT_DIR)
+    output_root = os.path.realpath(OUTPUT_DIR)
 
     # Support 'batch_id/filename' passed in a single string
     if "/" in filename or "\\" in filename:
         parts = re.split(r"[/\\]", filename.strip("/\\"))
         if len(parts) == 2 and _is_safe_path_segment(parts[0]) and _is_safe_path_segment(parts[1]):
-            candidate = os.path.abspath(os.path.join(output_root, parts[0], parts[1]))
-            if candidate.startswith(output_root + os.sep) and os.path.isfile(candidate):
-                return candidate
+            candidate = os.path.join(output_root, parts[0], parts[1])
+            if _is_within_output_dir(candidate, output_root) and os.path.isfile(candidate):
+                return os.path.realpath(candidate)
         return None
 
     if not _is_safe_path_segment(filename):
         return None
 
-    if batch_id:
+    if batch_id is not None:
         if not _is_safe_path_segment(batch_id):
             return None
-        candidate = os.path.abspath(os.path.join(output_root, batch_id, filename))
-        if candidate.startswith(output_root + os.sep) and os.path.isfile(candidate):
-            return candidate
+        candidate = os.path.join(output_root, batch_id, filename)
+        if _is_within_output_dir(candidate, output_root) and os.path.isfile(candidate):
+            return os.path.realpath(candidate)
         return None
 
     # Check root OUTPUT_DIR first for backwards compatibility
-    direct_candidate = os.path.abspath(os.path.join(output_root, filename))
-    if direct_candidate.startswith(output_root + os.sep) and os.path.isfile(direct_candidate):
-        return direct_candidate
+    direct_candidate = os.path.join(output_root, filename)
+    if _is_within_output_dir(direct_candidate, output_root) and os.path.isfile(direct_candidate):
+        return os.path.realpath(direct_candidate)
 
     # Search batch subdirectories safely, newest first
     try:
         subdirs = [entry for entry in os.scandir(output_root) if entry.is_dir() and _is_safe_path_segment(entry.name)]
         subdirs.sort(key=lambda e: e.stat().st_mtime, reverse=True)
         for entry in subdirs:
-            candidate = os.path.abspath(os.path.join(entry.path, filename))
-            if candidate.startswith(output_root + os.sep) and os.path.isfile(candidate):
-                return candidate
+            candidate = os.path.join(entry.path, filename)
+            if _is_within_output_dir(candidate, output_root) and os.path.isfile(candidate):
+                return os.path.realpath(candidate)
     except OSError:
         return None
 
@@ -240,8 +300,14 @@ def _normalize_year(val: str) -> str:
     return cleaned
 
 
-def normalize_record(p: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalizes participant fields. Empty optional fields remain empty and are not drawn over pre-printed template text."""
+def normalize_record(
+    p: Dict[str, Any],
+    field_mapping: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """
+    Normalizes participant fields and applies explicit placeholder->column mappings.
+    Empty optional fields remain empty and are not drawn over pre-printed template text.
+    """
     lowered = {str(k).strip().lower(): v for k, v in p.items()}
 
     def _pick(*keys: str) -> str:
@@ -259,7 +325,7 @@ def normalize_record(p: Dict[str, Any]) -> Dict[str, Any]:
     )
     achievement_text = _pick("achievement_text", "description", "citation")
 
-    return {
+    result: Dict[str, Any] = {
         "full_name": full_name,
         "certificate_id": _pick("certificate_id"),
         "email": _pick(
@@ -276,6 +342,21 @@ def normalize_record(p: Dict[str, Any]) -> Dict[str, Any]:
         "signer_title": _pick("signer_title"),
         "organization": _pick("organization_on_certificate", "organization"),
     }
+
+    if field_mapping:
+        for placeholder_key, dataset_col in field_mapping.items():
+            key = str(placeholder_key).strip()
+            col = str(dataset_col).strip()
+            if not key or not col:
+                continue
+            val = p.get(col)
+            if val is None:
+                val = lowered.get(col.lower())
+            if val is not None:
+                cleaned = _clean_str(val)
+                result[key] = _normalize_year(cleaned) if key == "year" else cleaned
+
+    return result
 
 
 def convert_pdf_to_image_bytes(pdf_bytes: bytes, dpi: int = 150) -> bytes:
@@ -365,29 +446,45 @@ def dispatch_single_email_smtp(
     participant: Dict[str, Any],
     pdf_path: str,
     subject: Optional[str] = None,
-    jinja_tmpl: Optional[jinja2.Template] = None
+    jinja_tmpl: Optional[jinja2.Template] = None,
+    max_retries: int = 2,
 ) -> Dict[str, Any]:
-    """Dispatches a distinct certificate email via an active SMTP connection."""
+    """Dispatches a distinct certificate email via an active SMTP connection with retry & HTML escaping."""
+    if not _is_valid_email(recipient_email):
+        return {"status": "Failed", "error": "Invalid recipient email address."}
+
+    if not pdf_path or not os.path.isfile(pdf_path):
+        return {"status": "Failed", "error": "Certificate attachment file not found."}
+
     try:
-        full_name = participant.get("full_name", "Recipient")
-        cert_id = participant.get("certificate_id", "")
-        event_name = participant.get("event_name", "Certificate of Achievement")
+        full_name = str(participant.get("full_name") or "Recipient")
+        cert_id = str(participant.get("certificate_id") or "")
+        event_name = str(participant.get("event_name") or "Certificate of Achievement")
 
         with open(pdf_path, "rb") as f:
             attachment_bytes = f.read()
         attachment_filename = os.path.basename(pdf_path)
 
-        # HTML body
-        if jinja_tmpl:
-            html_body = jinja_tmpl.render(**participant)
-        else:
-            html_body = f"<p>Dear {full_name},</p><p>Congratulations! Your certificate is attached.</p>"
+        # Escape all dynamic user strings before HTML rendering to prevent XSS/HTML injection
+        escaped_participant = {
+            k: (html.escape(str(v), quote=True) if isinstance(v, str) else v)
+            for k, v in participant.items()
+        }
+        safe_full_name = html.escape(full_name, quote=True)
 
-        # Construct email message
+        if jinja_tmpl:
+            html_body = jinja_tmpl.render(**escaped_participant)
+        else:
+            html_body = f"<p>Dear {safe_full_name},</p><p>Congratulations! Your certificate is attached.</p>"
+
+        # Construct email message (strip header newlines to prevent header injection)
+        safe_subject = re.sub(r"[\r\n]+", " ", subject or f"Your Certificate of Achievement - {event_name}").strip()
+        safe_recipient = re.sub(r"[\r\n]+", "", recipient_email).strip()
+
         msg = EmailMessage()
-        msg["Subject"] = subject or f"Your Certificate of Achievement - {event_name}"
+        msg["Subject"] = safe_subject
         msg["From"] = f"{sender_name} <{sender_email}>"
-        msg["To"] = recipient_email
+        msg["To"] = safe_recipient
 
         msg.set_content(
             f"Dear {full_name},\n\n"
@@ -407,10 +504,27 @@ def dispatch_single_email_smtp(
             filename=attachment_filename
         )
 
-        server.send_message(msg)
-        return {"status": "Sent", "error": None}
+        attempts = max(0, int(max_retries)) + 1
+        last_err: Optional[Exception] = None
+        for attempt in range(attempts):
+            try:
+                server.send_message(msg)
+                return {"status": "Sent", "error": None}
+            except smtplib.SMTPAuthenticationError:
+                return {"status": "Failed", "error": "SMTP authentication failed."}
+            except smtplib.SMTPException as smtp_err:
+                last_err = smtp_err
+                if attempt < attempts - 1:
+                    time.sleep(0.5 * (2 ** attempt))
+            except Exception as e:
+                return {"status": "Failed", "error": f"Email dispatch error: {type(e).__name__}"}
+
+        return {
+            "status": "Failed",
+            "error": f"SMTP send failed after {attempts} attempt(s): {type(last_err).__name__}" if last_err else "SMTP send failed.",
+        }
     except Exception as e:
-        return {"status": "Failed", "error": str(e)}
+        return {"status": "Failed", "error": f"Email preparation failed: {type(e).__name__}"}
 
 
 @app.get("/")
@@ -457,12 +571,75 @@ async def parse_dataset_file(file: UploadFile = File(...)):
     }
 
 
+def _manifest_to_extracted_placeholders(manifest: TemplateManifest) -> List[Dict[str, Any]]:
+    """Builds extracted_placeholders metadata from a TemplateManifest when scan_template_details is unavailable."""
+    return [
+        {
+            "key": field_key,
+            "token": getattr(fc, "token", None) or f"{{{{{field_key}}}}}",
+            "label": field_key.replace("_", " ").title(),
+            "font_size_pct": fc.font_size_pct,
+            "bold": bool(getattr(fc, "bold", False) or "bold" in (fc.font_family or "").lower()),
+            "italic": bool(getattr(fc, "italic", False) or "italic" in (fc.font_family or "").lower()),
+            "color": fc.color,
+            "max_lines": getattr(fc, "max_lines", 3),
+            "required": bool(getattr(fc, "required", field_key == "full_name")),
+        }
+        for field_key, fc in manifest.fields.items()
+    ]
+
+
+@app.post("/api/templates/inspect")
+async def inspect_template(template: UploadFile = File(...)):
+    """
+    Inspects an uploaded certificate template (PNG, JPG, PDF) and extracts
+    detected placeholders, tokens, and typography styles for dynamic data mapping.
+    """
+    settings = load_settings()
+    template_bytes = await template.read()
+    _validate_upload_file(
+        filename=template.filename,
+        content=template_bytes,
+        allowed_exts=ALLOWED_TEMPLATE_EXTENSIONS,
+        max_upload_mb=settings.max_upload_mb,
+        label="template",
+    )
+    filename = os.path.basename(template.filename or "template.png")
+
+    scan_details_fn = getattr(template_scanner, "scan_template_details", None)
+    try:
+        if callable(scan_details_fn):
+            manifest, extracted_placeholders = scan_details_fn(
+                template_bytes=template_bytes,
+                filename=filename,
+            )
+        else:
+            manifest = scan_template_placeholders(
+                template_bytes=template_bytes,
+                filename=filename,
+            )
+            extracted_placeholders = _manifest_to_extracted_placeholders(manifest)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to inspect uploaded template file. Please ensure it is a valid PNG, JPG, or PDF.",
+        )
+
+    return {
+        "ok": True,
+        "template_filename": filename,
+        "template_id": manifest.template_id,
+        "extracted_placeholders": extracted_placeholders,
+    }
+
+
 @app.post("/api/certificates/generate")
 @app.post("/certificate/batches/generate")
 async def generate_certificates(
     template: UploadFile = File(...),
     participants: Optional[str] = Form(None),
     dataset: Optional[UploadFile] = File(None),
+    field_mapping: Optional[str] = Form(None),
     format: str = Form("png"),
     send_emails: bool = Form(False),
     email_subject: Optional[str] = Form(None)
@@ -473,54 +650,78 @@ async def generate_certificates(
     Uses concurrent thread workers for high speed.
     Optionally dispatches distinct emails with attachments.
     """
-    # 1. Validate template format
-    filename = template.filename or "template.png"
-    ext = filename.lower().split(".")[-1]
-    if ext not in ("png", "jpg", "jpeg", "pdf"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported template format '.{ext}'. Please upload a PNG, JPG, or PDF file."
-        )
+    settings = load_settings()
 
+    # 1. Validate template format & size
     template_bytes = await template.read()
-    if not template_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded template file is empty."
-        )
+    ext = _validate_upload_file(
+        filename=template.filename,
+        content=template_bytes,
+        allowed_exts=ALLOWED_TEMPLATE_EXTENSIONS,
+        max_upload_mb=settings.max_upload_mb,
+        label="template",
+    )
+    filename = os.path.basename(template.filename or "template.png")
 
     out_format = "pdf" if format.strip().lower() == "pdf" else "png"
     use_pdf_engine = (ext == "pdf")
 
-    # 2. Prepare template bytes: keep vector PDF bytes for PyMuPdfEngine (both PDF & PNG export)
+    # 2. Parse optional dynamic field_mapping (placeholder_key -> dataset_column)
+    parsed_mapping: Dict[str, str] = {}
+    if field_mapping:
+        try:
+            raw_map = json.loads(field_mapping)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid field_mapping JSON format.",
+            )
+        if not isinstance(raw_map, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="field_mapping must be a JSON object mapping placeholder keys to dataset columns.",
+            )
+        parsed_mapping = {
+            str(k).strip(): str(v).strip()
+            for k, v in raw_map.items()
+            if k is not None and v is not None and str(v).strip()
+        }
+
+    # Prepare template bytes: keep vector PDF bytes for PyMuPdfEngine (both PDF & PNG export)
     render_template_bytes = template_bytes
 
     # 3. Parse participant data from uploaded spreadsheet file OR form JSON string
     raw_participants = []
     if dataset is not None and dataset.filename:
         dataset_bytes = await dataset.read()
-        if dataset_bytes:
-            try:
-                raw_participants = load_dataset(content_bytes=dataset_bytes, filename=dataset.filename)
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Failed to parse uploaded dataset spreadsheet '{dataset.filename}': {str(e)}"
-                )
+        _validate_upload_file(
+            filename=dataset.filename,
+            content=dataset_bytes,
+            allowed_exts=ALLOWED_DATASET_EXTENSIONS,
+            max_upload_mb=settings.max_upload_mb,
+            label="dataset",
+        )
+        try:
+            raw_participants = load_dataset(content_bytes=dataset_bytes, filename=dataset.filename)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to parse uploaded dataset spreadsheet '{os.path.basename(dataset.filename)}'.",
+            )
 
     if not raw_participants and participants:
         try:
             raw_participants = json.loads(participants)
-        except Exception as e:
+        except Exception:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid participant JSON data: {str(e)}"
+                detail="Invalid participant JSON data.",
             )
 
     if not raw_participants:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Please provide participant data via 'participants' JSON or upload a 'dataset' spreadsheet (.xlsx, .xls, .csv)."
+            detail="Please provide participant data via 'participants' JSON or upload a 'dataset' spreadsheet (.xlsx, .xls, .csv).",
         )
 
     if not isinstance(raw_participants, list) or len(raw_participants) == 0:
@@ -529,14 +730,29 @@ async def generate_certificates(
             detail="Participant dataset must be a non-empty list of records."
         )
 
-    # 4. Normalize records and validate essential fields (flag missing-name rows instead of crashing whole batch)
+    # 4. Normalize records and validate essential fields (isolate malformed/missing-name rows cleanly)
     normalized_list = []
     invalid_results = []
     for idx, raw_p in enumerate(raw_participants, start=1):
-        norm = normalize_record(raw_p)
-        if not norm["certificate_id"]:
+        if not isinstance(raw_p, dict):
+            invalid_results.append({
+                "certificate_id": f"CERT-{idx:04d}",
+                "participant_name": "",
+                "email": "",
+                "status": "Failed",
+                "filename": "",
+                "preview_url": "",
+                "error": f"Record #{idx} is malformed (expected JSON object).",
+                "overflowed": False,
+                "warnings": [f"Record #{idx} is malformed (expected JSON object)."],
+                "email_status": "Skipped (malformed record)",
+            })
+            continue
+
+        norm = normalize_record(raw_p, field_mapping=parsed_mapping)
+        if not norm.get("certificate_id"):
             norm["certificate_id"] = f"CERT-{idx:04d}"
-        if not norm["full_name"]:
+        if not norm.get("full_name"):
             invalid_results.append({
                 "certificate_id": norm["certificate_id"],
                 "participant_name": "",
@@ -555,7 +771,7 @@ async def generate_certificates(
     if not normalized_list:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="All records are missing required recipient name."
+            detail="All records are malformed or missing required recipient name."
         )
 
     # 5. Build manifest & initialize rendering engine by scanning template for exact text placeholders
@@ -594,7 +810,6 @@ async def generate_certificates(
     emails_failed = 0
 
     if send_emails:
-        settings = load_settings()
         clean_pwd = (settings.smtp_password or "").replace(" ", "").strip()
         if not settings.smtp_user or not clean_pwd:
             for r in generated_results:
@@ -607,26 +822,37 @@ async def generate_certificates(
                     jinja_tmpl = jinja2.Template(f.read())
 
             try:
-                with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as server:
+                with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds) as server:
                     server.ehlo()
                     server.starttls()
                     server.ehlo()
                     server.login(settings.smtp_user, clean_pwd)
 
                     for r in generated_results:
-                        if r["status"] != "Generated" or not r.get("email"):
-                            r["email_status"] = "Skipped (no valid email or generation failed)"
+                        if r["status"] != "Generated":
+                            r["email_status"] = "Skipped (generation failed)"
+                            continue
+
+                        recipient = (r.get("email") or "").strip()
+                        if not recipient:
+                            r["email_status"] = "Skipped (no email provided)"
+                            continue
+
+                        if not _is_valid_email(recipient):
+                            r["email_status"] = "Failed: Invalid email address format"
+                            emails_failed += 1
                             continue
 
                         disp_res = dispatch_single_email_smtp(
                             server=server,
                             sender_email=settings.smtp_user,
                             sender_name=settings.smtp_from_name,
-                            recipient_email=r["email"],
+                            recipient_email=recipient,
                             participant=r["item_data"],
                             pdf_path=r["file_path"],
                             subject=email_subject,
-                            jinja_tmpl=jinja_tmpl
+                            jinja_tmpl=jinja_tmpl,
+                            max_retries=settings.email_max_retries,
                         )
 
                         r["email_status"] = disp_res["status"]
@@ -638,10 +864,16 @@ async def generate_certificates(
 
                         # Pacing to protect against Gmail spam throttle
                         time.sleep(0.15)
-            except Exception as smtp_err:
+            except smtplib.SMTPAuthenticationError:
                 for r in generated_results:
                     if "email_status" not in r:
-                        r["email_status"] = f"Failed: {str(smtp_err)}"
+                        r["email_status"] = "Failed: SMTP authentication failed."
+                        emails_failed += 1
+            except Exception as smtp_err:
+                err_name = type(smtp_err).__name__
+                for r in generated_results:
+                    if "email_status" not in r:
+                        r["email_status"] = f"Failed: SMTP error ({err_name})"
                         emails_failed += 1
     else:
         for r in generated_results:
@@ -691,14 +923,14 @@ async def send_batch_emails(req: SendBatchEmailsRequest):
 
     results = []
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as server:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()
             server.login(settings.smtp_user, clean_pwd)
 
             for item in req.recipients:
-                email = item.get("email")
+                email = (item.get("email") or "").strip() if isinstance(item.get("email"), str) else item.get("email")
                 filename = item.get("filename")
                 item_batch_id = item.get("batch_id") or req.batch_id
                 cert_id = str(item.get("certificate_id") or filename or email or "").strip()
@@ -707,9 +939,13 @@ async def send_batch_emails(req: SendBatchEmailsRequest):
                     results.append({"email": email, "certificate_id": cert_id, "status": "Failed", "error": "Missing email or filename"})
                     continue
 
+                if not _is_valid_email(email):
+                    results.append({"email": email, "certificate_id": cert_id, "status": "Failed", "error": "Invalid email address format"})
+                    continue
+
                 file_path = _resolve_certificate_path(filename, batch_id=item_batch_id)
-                if not file_path:
-                    results.append({"email": email, "certificate_id": cert_id, "status": "Failed", "error": f"File '{filename}' not found"})
+                if not file_path or not os.path.isfile(file_path):
+                    results.append({"email": email, "certificate_id": cert_id, "status": "Failed", "error": f"File '{os.path.basename(str(filename))}' not found"})
                     continue
 
                 batch_scope = item_batch_id or os.path.basename(os.path.dirname(file_path)) or "default"
@@ -736,7 +972,8 @@ async def send_batch_emails(req: SendBatchEmailsRequest):
                     participant=item,
                     pdf_path=file_path,
                     subject=req.subject,
-                    jinja_tmpl=jinja_tmpl
+                    jinja_tmpl=jinja_tmpl,
+                    max_retries=settings.email_max_retries,
                 )
 
                 if disp_res["status"] == "Sent":
@@ -752,10 +989,15 @@ async def send_batch_emails(req: SendBatchEmailsRequest):
                     "error": disp_res.get("error"),
                 })
                 time.sleep(0.15)
+    except smtplib.SMTPAuthenticationError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="SMTP authentication failed.",
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"SMTP Connection Error: {str(e)}"
+            detail=f"SMTP Connection Error: {type(e).__name__}"
         )
 
     return {"success": True, "results": results}
@@ -776,6 +1018,12 @@ class SendSingleEmailRequest(BaseModel):
 @app.post("/api/certificates/send-single-email")
 async def send_single_email(req: SendSingleEmailRequest):
     """Sends a certificate to an individual recipient."""
+    if not _is_valid_email(req.email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid recipient email address."
+        )
+
     settings = load_settings()
     clean_pwd = (settings.smtp_password or "").replace(" ", "").strip()
     if not settings.smtp_user or not clean_pwd:
@@ -785,10 +1033,10 @@ async def send_single_email(req: SendSingleEmailRequest):
         )
 
     file_path = _resolve_certificate_path(req.filename, batch_id=req.batch_id)
-    if not file_path:
+    if not file_path or not os.path.isfile(file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Certificate file '{req.filename}' not found."
+            detail=f"Certificate file '{os.path.basename(req.filename)}' not found."
         )
 
     jinja_tmpl = None
@@ -797,7 +1045,7 @@ async def send_single_email(req: SendSingleEmailRequest):
             jinja_tmpl = jinja2.Template(f.read())
 
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as server:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()
@@ -807,16 +1055,22 @@ async def send_single_email(req: SendSingleEmailRequest):
                 server=server,
                 sender_email=settings.smtp_user,
                 sender_name=settings.smtp_from_name,
-                recipient_email=req.email,
+                recipient_email=req.email.strip(),
                 participant=req.model_dump(),
                 pdf_path=file_path,
                 subject=req.subject,
-                jinja_tmpl=jinja_tmpl
+                jinja_tmpl=jinja_tmpl,
+                max_retries=settings.email_max_retries,
             )
+    except smtplib.SMTPAuthenticationError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="SMTP authentication failed."
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"SMTP Error: {str(e)}"
+            detail=f"SMTP Error: {type(e).__name__}"
         )
 
     if disp_res["status"] != "Sent":
@@ -825,7 +1079,7 @@ async def send_single_email(req: SendSingleEmailRequest):
             detail=disp_res.get("error", "Email dispatch failed")
         )
 
-    return {"success": True, "message": f"Email successfully sent to {req.email}"}
+    return {"success": True, "message": f"Email successfully sent to {req.email.strip()}"}
 
 
 @app.post("/api/certificates/test-smtp")
@@ -840,7 +1094,7 @@ def test_smtp_connection():
         }
 
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=min(10, settings.smtp_timeout_seconds)) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()
@@ -849,13 +1103,21 @@ def test_smtp_connection():
             "ok": True,
             "message": f"Successfully connected and authenticated with {settings.smtp_host}:{settings.smtp_port} as {settings.smtp_user}"
         }
+    except smtplib.SMTPAuthenticationError:
+        return {"ok": False, "error": "SMTP authentication failed."}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": f"SMTP connection failed: {type(e).__name__}"}
 
 
 @app.get("/api/certificates/download/{batch_id}/{filename}")
 def download_batch_certificate(batch_id: str, filename: str):
     """Serves generated certificate PNG or PDF directly from a batch subdirectory."""
+    if not _is_safe_path_segment(batch_id) or not _is_safe_path_segment(filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid certificate path."
+        )
+
     file_path = _resolve_certificate_path(filename, batch_id=batch_id)
     if not file_path:
         raise HTTPException(
@@ -877,6 +1139,12 @@ def download_batch_certificate(batch_id: str, filename: str):
 @app.get("/api/certificates/download/{filename}")
 def download_certificate(filename: str):
     """Serves generated certificate PNG or PDF, searching batch subdirectories safely."""
+    if ".." in filename or "\x00" in filename or ":" in filename or os.path.isabs(filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid certificate path."
+        )
+
     file_path = _resolve_certificate_path(filename)
     if not file_path:
         raise HTTPException(
