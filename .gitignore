@@ -25,7 +25,8 @@ backend/.venv/
 *.sqlite3
 *.db
 alembic/versions/__pycache__/
-backend/sample_templates/output/
+backend/sample_data/
+backend/sample_templates/
 
 # JavaScript / frontend artifacts
 node_modules/
