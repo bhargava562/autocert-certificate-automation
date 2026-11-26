@@ -471,11 +471,13 @@ class TestApiEndpointsAndSecurity:
                 assert results[0]["status"] == "Sent"
                 assert mock_server.send_message.call_count == 2
 
-                # Verify HTML escaping in the sent EmailMessage
+                # Verify HTML escaping in the HTML body part of the sent EmailMessage
                 sent_msg = mock_server.send_message.call_args[0][0]
-                msg_str = sent_msg.as_string()
-                assert "<script>alert" not in msg_str
-                assert "&lt;script&gt;" in msg_str
+                html_part = sent_msg.get_body(preferencelist=("html",))
+                assert html_part is not None
+                html_body = html_part.get_content()
+                assert "<script>alert" not in html_body
+                assert "&lt;script&gt;" in html_body
 
                 # Invalid email rejected without calling send_message
                 assert results[1]["status"] == "Failed"
