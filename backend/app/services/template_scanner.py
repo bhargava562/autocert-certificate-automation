@@ -54,7 +54,18 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
                         x2_pct = min(1.0, (r.x1 / pw) + 0.005)
                         y2_pct = min(1.0, (r.y2 if hasattr(r, 'y2') else r.y1) / ph + 0.008)
 
-                        max_w = min(0.40, max(0.12, ((r.x1 - r.x0) / pw) * 2.5))
+                        # Give realistic max_w_pct per field type instead of shrinking to token width
+                        raw_w_pct = (r.x1 - r.x0) / pw
+                        if field_key == "full_name":
+                            max_w = max(0.45, min(0.80, raw_w_pct * 4.0))
+                        elif field_key == "achievement_title":
+                            max_w = max(0.40, min(0.75, raw_w_pct * 3.5))
+                        elif field_key == "department":
+                            max_w = max(0.18, min(0.45, raw_w_pct * 2.5))
+                        elif field_key == "year":
+                            max_w = max(0.10, min(0.25, raw_w_pct * 2.0))
+                        else:
+                            max_w = max(0.25, min(0.65, raw_w_pct * 3.0))
 
                         font_size_pct = round((r.y1 - r.y0) / ph, 4)
                         if font_size_pct < 0.015:
@@ -71,7 +82,7 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
                             align="center",
                             color="#111827",
                             clear_area=(round(x1_pct, 4), round(y1_pct, 4), round(x2_pct, 4), round(y2_pct, 4)),
-                            clear_bg_color="auto"
+                            clear_bg_color="transparent"
                         )
                         break
             doc.close()

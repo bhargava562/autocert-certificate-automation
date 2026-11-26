@@ -12,9 +12,11 @@ import io
 import time
 import json
 import uuid
+import hashlib
 import smtplib
+import threading
 from email.message import EmailMessage
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 import re
@@ -27,8 +29,10 @@ from pydantic import BaseModel
 
 from .core.config import load_settings, Settings
 from .services.models import TemplateManifest, FieldConfig
+from .services.protocols import CertificateEngine
 from .services.text_fitting import TextFittingService
 from .services.engines.image_engine import PillowImageEngine
+from .services.engines.pdf_engine import PyMuPdfEngine
 from .services.template_scanner import scan_template_placeholders
 from .services.dataset_parser import load_dataset
 
@@ -54,6 +58,67 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUTPUT_DIR = os.path.join(BASE_DIR, "sample_templates", "output")
 EMAIL_TEMPLATE_PATH = os.path.join(BASE_DIR, "sample_templates", "sample_email_template.html")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Thread-safe idempotency registry for batch email sends: (batch_scope, sha256(certificate_id))
+_SENT_EMAIL_IDEMPOTENCY_KEYS: Set[Tuple[str, str]] = set()
+_SENT_EMAIL_LOCK = threading.Lock()
+
+
+def _is_safe_path_segment(segment: str) -> bool:
+    """Validates that a path segment is non-empty and contains no traversal characters."""
+    if not segment or segment in (".", ".."):
+        return False
+    return "/" not in segment and "\\" not in segment and os.path.basename(segment) == segment
+
+
+def _resolve_certificate_path(filename: str, batch_id: Optional[str] = None) -> Optional[str]:
+    """
+    Safely resolves a certificate file path inside OUTPUT_DIR.
+    Supports explicit batch_id, 'batch_id/filename' relative paths, direct files in OUTPUT_DIR,
+    and searching batch subdirectories (newest first) by filename.
+    """
+    if not filename:
+        return None
+
+    output_root = os.path.abspath(OUTPUT_DIR)
+
+    # Support 'batch_id/filename' passed in a single string
+    if "/" in filename or "\\" in filename:
+        parts = re.split(r"[/\\]", filename.strip("/\\"))
+        if len(parts) == 2 and _is_safe_path_segment(parts[0]) and _is_safe_path_segment(parts[1]):
+            candidate = os.path.abspath(os.path.join(output_root, parts[0], parts[1]))
+            if candidate.startswith(output_root + os.sep) and os.path.isfile(candidate):
+                return candidate
+        return None
+
+    if not _is_safe_path_segment(filename):
+        return None
+
+    if batch_id:
+        if not _is_safe_path_segment(batch_id):
+            return None
+        candidate = os.path.abspath(os.path.join(output_root, batch_id, filename))
+        if candidate.startswith(output_root + os.sep) and os.path.isfile(candidate):
+            return candidate
+        return None
+
+    # Check root OUTPUT_DIR first for backwards compatibility
+    direct_candidate = os.path.abspath(os.path.join(output_root, filename))
+    if direct_candidate.startswith(output_root + os.sep) and os.path.isfile(direct_candidate):
+        return direct_candidate
+
+    # Search batch subdirectories safely, newest first
+    try:
+        subdirs = [entry for entry in os.scandir(output_root) if entry.is_dir() and _is_safe_path_segment(entry.name)]
+        subdirs.sort(key=lambda e: e.stat().st_mtime, reverse=True)
+        for entry in subdirs:
+            candidate = os.path.abspath(os.path.join(entry.path, filename))
+            if candidate.startswith(output_root + os.sep) and os.path.isfile(candidate):
+                return candidate
+    except OSError:
+        return None
+
+    return None
 
 
 def build_default_manifest(filename: str, output_format: str = "png") -> TemplateManifest:
@@ -208,22 +273,28 @@ def convert_pdf_to_image_bytes(pdf_bytes: bytes, dpi: int = 150) -> bytes:
 
 def render_single_certificate(
     item: Dict[str, Any],
-    image_bytes: bytes,
+    template_bytes: bytes,
     manifest: TemplateManifest,
-    engine: PillowImageEngine,
-    output_dir: str
+    engine: CertificateEngine,
+    output_dir: str,
+    batch_id: str,
 ) -> Dict[str, Any]:
-    """Renders an individual certificate safely."""
+    """Renders an individual certificate safely into a batch-scoped directory."""
     try:
         render_res = engine.render(
-            template_bytes=image_bytes,
+            template_bytes=template_bytes,
             fields=item,
             manifest=manifest
         )
-        out_filename = render_res.filename
+        ext = render_res.filename.rsplit(".", 1)[-1].lower() if "." in render_res.filename else (manifest.default_format or "png").lower()
+        safe_cert_id = re.sub(r"[^A-Za-z0-9._-]", "_", str(item["certificate_id"]))
+        out_filename = f"{safe_cert_id}.{ext}"
         out_path = os.path.join(output_dir, out_filename)
         with open(out_path, "wb") as f:
             f.write(render_res.content)
+
+        overflowed = bool(getattr(render_res, "overflowed", render_res.metadata.get("overflowed", False)))
+        warnings = list(getattr(render_res, "warnings", render_res.metadata.get("warnings", [])) or [])
 
         return {
             "certificate_id": item["certificate_id"],
@@ -231,7 +302,9 @@ def render_single_certificate(
             "email": item.get("email", ""),
             "status": "Generated",
             "filename": out_filename,
-            "preview_url": f"/api/certificates/download/{out_filename}",
+            "preview_url": f"/api/certificates/download/{batch_id}/{out_filename}",
+            "overflowed": overflowed,
+            "warnings": warnings,
             "file_path": out_path,
             "item_data": item,
         }
@@ -243,6 +316,8 @@ def render_single_certificate(
             "status": "Failed",
             "filename": "",
             "preview_url": "",
+            "overflowed": False,
+            "warnings": [],
             "error": str(err),
             "file_path": "",
             "item_data": item,
@@ -381,17 +456,22 @@ async def generate_certificates(
             detail="Uploaded template file is empty."
         )
 
-    # 2. Normalize template bytes to renderable image bytes
-    if ext == "pdf":
+    out_format = "pdf" if format.strip().lower() == "pdf" else "png"
+    use_vector_pdf = (ext == "pdf" and out_format == "pdf")
+
+    # 2. Prepare template bytes: keep vector PDF bytes for PDF->PDF, rasterize only when needed
+    if use_vector_pdf:
+        render_template_bytes = template_bytes
+    elif ext == "pdf":
         try:
-            image_template_bytes = convert_pdf_to_image_bytes(template_bytes, dpi=200)
+            render_template_bytes = convert_pdf_to_image_bytes(template_bytes, dpi=200)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Could not parse PDF template: {str(e)}"
             )
     else:
-        image_template_bytes = template_bytes
+        render_template_bytes = template_bytes
 
     # 3. Parse participant data from uploaded spreadsheet file OR form JSON string
     raw_participants = []
@@ -444,31 +524,28 @@ async def generate_certificates(
     manifest = scan_template_placeholders(
         template_bytes=template_bytes,
         filename=filename,
-        default_format=format
+        default_format=out_format
     )
-    text_service = TextFittingService()
-    engine = PillowImageEngine(text_service)
+    if use_vector_pdf:
+        engine: CertificateEngine = PyMuPdfEngine()
+    else:
+        text_service = TextFittingService()
+        engine = PillowImageEngine(text_service)
 
-    # Clean output folder before generating new batch to eliminate stale artifacts
-    for f in os.listdir(OUTPUT_DIR):
-        fp = os.path.join(OUTPUT_DIR, f)
-        if os.path.isfile(fp):
-            try:
-                os.remove(fp)
-            except Exception:
-                pass
-
-    # 6. Concurrency: Multi-threaded parallel certificate rendering
+    # 6. Concurrency: Multi-threaded parallel certificate rendering in batch-scoped directory
     batch_id = f"batch_{uuid.uuid4().hex[:8]}"
+    batch_output_dir = os.path.join(OUTPUT_DIR, batch_id)
+    os.makedirs(batch_output_dir, exist_ok=True)
     max_workers = min(16, (os.cpu_count() or 1) + 4)
 
     def _render_task(item):
         return render_single_certificate(
             item=item,
-            image_bytes=image_template_bytes,
+            template_bytes=render_template_bytes,
             manifest=manifest,
             engine=engine,
-            output_dir=OUTPUT_DIR
+            output_dir=batch_output_dir,
+            batch_id=batch_id,
         )
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -549,14 +626,15 @@ async def generate_certificates(
 
 
 class SendBatchEmailsRequest(BaseModel):
-    filenames: List[str]
+    filenames: List[str] = []
     recipients: List[Dict[str, Any]]
     subject: Optional[str] = None
+    batch_id: Optional[str] = None
 
 
 @app.post("/api/certificates/send-batch-emails")
 async def send_batch_emails(req: SendBatchEmailsRequest):
-    """Dispatches emails for previously generated certificates with pacing & error isolation."""
+    """Dispatches emails for previously generated certificates with pacing, idempotency deduplication, & error isolation."""
     settings = load_settings()
     clean_pwd = (settings.smtp_password or "").replace(" ", "").strip()
     if not settings.smtp_user or not clean_pwd:
@@ -581,14 +659,33 @@ async def send_batch_emails(req: SendBatchEmailsRequest):
             for item in req.recipients:
                 email = item.get("email")
                 filename = item.get("filename")
+                item_batch_id = item.get("batch_id") or req.batch_id
+                cert_id = str(item.get("certificate_id") or filename or email or "").strip()
+
                 if not email or not filename:
-                    results.append({"email": email, "status": "Failed", "error": "Missing email or filename"})
+                    results.append({"email": email, "certificate_id": cert_id, "status": "Failed", "error": "Missing email or filename"})
                     continue
 
-                file_path = os.path.join(OUTPUT_DIR, os.path.basename(filename))
-                if not os.path.exists(file_path):
-                    results.append({"email": email, "status": "Failed", "error": f"File '{filename}' not found"})
+                file_path = _resolve_certificate_path(filename, batch_id=item_batch_id)
+                if not file_path:
+                    results.append({"email": email, "certificate_id": cert_id, "status": "Failed", "error": f"File '{filename}' not found"})
                     continue
+
+                batch_scope = item_batch_id or os.path.basename(os.path.dirname(file_path)) or "default"
+                idempotency_key = hashlib.sha256(cert_id.encode("utf-8")).hexdigest()
+                dedup_token = (batch_scope, idempotency_key)
+
+                with _SENT_EMAIL_LOCK:
+                    if dedup_token in _SENT_EMAIL_IDEMPOTENCY_KEYS:
+                        results.append({
+                            "email": email,
+                            "certificate_id": cert_id,
+                            "idempotency_key": idempotency_key,
+                            "status": "Skipped (Duplicate)",
+                            "deduplicated": True,
+                            "error": None,
+                        })
+                        continue
 
                 disp_res = dispatch_single_email_smtp(
                     server=server,
@@ -600,7 +697,19 @@ async def send_batch_emails(req: SendBatchEmailsRequest):
                     subject=req.subject,
                     jinja_tmpl=jinja_tmpl
                 )
-                results.append({"email": email, "status": disp_res["status"], "error": disp_res.get("error")})
+
+                if disp_res["status"] == "Sent":
+                    with _SENT_EMAIL_LOCK:
+                        _SENT_EMAIL_IDEMPOTENCY_KEYS.add(dedup_token)
+
+                results.append({
+                    "email": email,
+                    "certificate_id": cert_id,
+                    "idempotency_key": idempotency_key,
+                    "status": disp_res["status"],
+                    "deduplicated": False,
+                    "error": disp_res.get("error"),
+                })
                 time.sleep(0.15)
     except Exception as e:
         raise HTTPException(
@@ -616,6 +725,7 @@ class SendSingleEmailRequest(BaseModel):
     email: str
     full_name: str
     certificate_id: str
+    batch_id: Optional[str] = None
     achievement_title: Optional[str] = ""
     event_name: Optional[str] = "Certificate of Achievement"
     issue_date: Optional[str] = ""
@@ -633,8 +743,8 @@ async def send_single_email(req: SendSingleEmailRequest):
             detail="SMTP credentials not configured."
         )
 
-    file_path = os.path.join(OUTPUT_DIR, os.path.basename(req.filename))
-    if not os.path.exists(file_path):
+    file_path = _resolve_certificate_path(req.filename, batch_id=req.batch_id)
+    if not file_path:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Certificate file '{req.filename}' not found."
@@ -702,18 +812,38 @@ def test_smtp_connection():
         return {"ok": False, "error": str(e)}
 
 
-@app.get("/api/certificates/download/{filename}")
-def download_certificate(filename: str):
-    """Serves generated certificate PNG or PDF directly."""
-    safe_filename = os.path.basename(filename)
-    file_path = os.path.join(OUTPUT_DIR, safe_filename)
-
-    if not os.path.exists(file_path):
+@app.get("/api/certificates/download/{batch_id}/{filename}")
+def download_batch_certificate(batch_id: str, filename: str):
+    """Serves generated certificate PNG or PDF directly from a batch subdirectory."""
+    file_path = _resolve_certificate_path(filename, batch_id=batch_id)
+    if not file_path:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Certificate file '{safe_filename}' not found."
+            detail=f"Certificate file '{filename}' not found in batch '{batch_id}'."
         )
 
+    safe_filename = os.path.basename(file_path)
+    ext = safe_filename.lower().split(".")[-1]
+    media_type = "application/pdf" if ext == "pdf" else "image/png"
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=safe_filename
+    )
+
+
+@app.get("/api/certificates/download/{filename}")
+def download_certificate(filename: str):
+    """Serves generated certificate PNG or PDF, searching batch subdirectories safely."""
+    file_path = _resolve_certificate_path(filename)
+    if not file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Certificate file '{os.path.basename(filename)}' not found."
+        )
+
+    safe_filename = os.path.basename(file_path)
     ext = safe_filename.lower().split(".")[-1]
     media_type = "application/pdf" if ext == "pdf" else "image/png"
 
