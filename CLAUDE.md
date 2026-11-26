@@ -70,11 +70,15 @@ Data Source ➔ Batch (FSM) ➔ Participant Snapshot (JSONB) ➔ Generation Task
 
 ## Key Approaches & Design Guardrails
 
-- **Proportional Coordinates:** All `FieldConfig` positions (`x_pct`, `y_pct`), widths (`max_w_pct`), and font sizes (`font_size_pct`, `min_font_size_pct`) are normalized `0.0–1.0` ratios so rendering is resolution- and aspect-ratio-independent.
-- **Defensive Area Clearing:** `clear_area` + `clear_bg_color` and PyMuPDF `{{tag}}` redactions prevent text ghosting.
-- **Decoupled Output Formats:** Each run outputs strictly `png` or `pdf` and cleans `OUTPUT_DIR` beforehand.
+- **Proportional Coordinates & Overflow Policy:** All `FieldConfig` positions (`x_pct`, `y_pct`), widths (`max_w_pct`), heights (`max_h_pct`, `max_lines`), alignments (`align`, `v_align`), and font sizes (`font_size_pct`, `min_font_size_pct`) are normalized `0.0–1.0` ratios. `overflow_policy` (`shrink_wrap|ellipsize|flag_overflow`) prevents silent text bleed, and `RenderResult` surfaces `overflowed` + `warnings` to the UI.
+- **Vector PDF vs. Raster Separation:** `.pdf` templates targeting `pdf` output render natively via `PyMuPdfEngine` (redacting `{{...}}` tags and using explicit `clear_bg_color` only when non-transparent); raster templates / PNG output use `PillowImageEngine`.
+- **Batch-Scoped Artifacts & Idempotency:** Outputs are written to `backend/sample_templates/output/{batch_id}/{certificate_id}.{ext}` (never wiping `OUTPUT_DIR`), and batch email dispatch deduplicates using `sha256(certificate_id)`.
 - **SOLID & Dependency Inversion:** Engines implement `CertificateEngine`; pipeline depends on protocols (`TemplateProvider`, `CertificateEngine`, `StorageSink`).
-- **Env-Driven CORS:** `backend/app/core/config.py` loads `CORS_ORIGINS` from `backend/.env` with local dev defaults from `backend/.env.example`.
+- **Env-Driven Config & CORS:** `backend/app/core/config.py` loads `CORS_ORIGINS`, `DEFAULT_MIN_FONT_SIZE_PCT`, `DEFAULT_MAX_LINES`, and `SMTP_TIMEOUT_SECONDS` from `backend/.env` with defaults in `backend/.env.example`.
+
+## Current Checkpoint
+- **Backend & Frontend Hardened:** Text-fitting bounds, vector PDF decoupling, batch-scoped output paths, `sha256` email idempotency, and frontend overflow/warning badges + post-review batch email support are implemented on `main`.
+- **Environment:** `backend/.venv` uses Python 3.15 (`pydantic==2.14.4`, `pydantic_core==2.50.5`, `psycopg==3.3.9`, `psycopg-binary==3.3.9`); `frontend` passes `oxlint` and `vite build`. (Note: Windows Application Control on this host blocks `_mupdf.pyd` at runtime.)
 
 ---
 
