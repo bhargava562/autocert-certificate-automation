@@ -39,6 +39,9 @@ class Settings:
     smtp_password: Optional[str] = None
     smtp_from_name: str = "Autocert Certificates"
     smtp_from_email: Optional[str] = None
+    smtp_timeout_seconds: int = 30
+    default_min_font_size_pct: float = 0.015
+    default_max_lines: int = 3
 
 def load_settings(env_path: Optional[str] = None) -> Settings:
     if env_path is None:
@@ -71,4 +74,9 @@ def load_settings(env_path: Optional[str] = None) -> Settings:
         smtp_password=env.get("SMTP_PASSWORD") or os.getenv("SMTP_PASSWORD"),
         smtp_from_name=env.get("SMTP_FROM_NAME") or os.getenv("SMTP_FROM_NAME", "Autocert Certificates"),
         smtp_from_email=env.get("SMTP_FROM_EMAIL") or os.getenv("SMTP_FROM_EMAIL") or smtp_user,
+        smtp_timeout_seconds=int(env.get("SMTP_TIMEOUT_SECONDS") or os.getenv("SMTP_TIMEOUT_SECONDS") or 30),
+        default_min_font_size_pct=float(
+            env.get("DEFAULT_MIN_FONT_SIZE_PCT") or os.getenv("DEFAULT_MIN_FONT_SIZE_PCT") or 0.015
+        ),
+        default_max_lines=int(env.get("DEFAULT_MAX_LINES") or os.getenv("DEFAULT_MAX_LINES") or 3),
     )

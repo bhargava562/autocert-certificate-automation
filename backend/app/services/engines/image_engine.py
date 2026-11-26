@@ -5,11 +5,12 @@ exact text centering, and multi-line wrapping.
 """
 
 import io
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from PIL import Image, ImageDraw
 from ..protocols import CertificateEngine
 from ..models import TemplateManifest, RenderResult
 from ..text_fitting import TextFittingService
+from ...core.config import load_settings
 
 class PillowImageEngine:
     """Renders certificates from image templates (PNG, JPEG, WebP)"""
@@ -37,16 +38,32 @@ class PillowImageEngine:
             return max(effective_w, max_w_from_pct)
         return max_w_from_pct
 
+    def _compute_effective_max_height(self, canvas_h: int, config) -> Optional[int]:
+        """Derives the effective maximum pixel height from max_h_pct and clear_area."""
+        bounds: List[int] = []
+        max_h_pct = getattr(config, "max_h_pct", None)
+        if max_h_pct is not None:
+            bounds.append(max(1, int(canvas_h * max_h_pct)))
+        if config.clear_area:
+            clear_h = int(canvas_h * (config.clear_area[3] - config.clear_area[1]))
+            if clear_h > 0:
+                bounds.append(clear_h)
+        return min(bounds) if bounds else None
+
     def render(
         self,
         template_bytes: bytes,
         fields: Dict[str, Any],
         manifest: TemplateManifest
     ) -> RenderResult:
-        # Load image template
+        # Load image template and configurable defaults
         img = Image.open(io.BytesIO(template_bytes)).convert("RGB")
         draw = ImageDraw.Draw(img)
         canvas_w, canvas_h = img.size
+        settings = load_settings()
+
+        any_overflow = False
+        render_warnings: List[str] = []
 
         # Render each field defined in the manifest
         for field_name, config in manifest.fields.items():
@@ -86,105 +103,65 @@ class PillowImageEngine:
                 continue
 
             max_width = self._compute_effective_max_width(canvas_w, config)
+            max_height = self._compute_effective_max_height(canvas_h, config)
             target_size = max(10, int(canvas_h * config.font_size_pct))
-            min_size = (
-                max(8, int(canvas_h * config.min_font_size_pct))
-                if getattr(config, "min_font_size_pct", None)
-                else config.min_font_size
-            )
+            min_pct = getattr(config, "min_font_size_pct", None) or settings.default_min_font_size_pct
+            min_size = max(8, int(canvas_h * min_pct)) if min_pct else config.min_font_size
+            max_lines_allowed = getattr(config, "max_lines", None) or settings.default_max_lines
+            v_align = getattr(config, "v_align", "center")
+            overflow_policy = getattr(config, "overflow_policy", "shrink_wrap")
 
-            # Determine if text should be rendered in multi-line wrapping mode
             force_multiline = len(text_str) > 70 or "\n" in text_str or config.font_size_pct <= 0.020
 
-            if not force_multiline:
-                # Try single-line auto-scaled fit first
-                font, actual_size, text_w = self.text_service.fit_text_to_width(
+            font, actual_size, lines, line_height, field_overflowed, field_warnings = (
+                self.text_service.fit_text_block(
                     draw=draw,
                     text=text_str,
                     font_family=config.font_family,
                     target_size=target_size,
                     max_width=max_width,
-                    min_size=min_size
+                    max_height=max_height,
+                    min_size=min_size,
+                    max_lines=max_lines_allowed,
+                    line_spacing=config.line_spacing,
+                    overflow_policy=overflow_policy,
+                    force_multiline=force_multiline,
+                    field_name=field_name,
                 )
+            )
 
-                # If text still overflows at min_size, fall back to multi-line wrapping
-                if text_w > max_width:
-                    force_multiline = True
+            if field_overflowed:
+                any_overflow = True
+                render_warnings.extend(field_warnings)
 
-            if force_multiline:
-                # Multi-line wrapping mode: auto-scale font then wrap into lines
-                # First try to fit at target_size with wrapping; if the wrapped font
-                # is still too large, scale down until wrapping produces a reasonable
-                # number of lines that fit within the clear_area height.
-                wrap_size = target_size
-                wrap_step = max(1, int(target_size * 0.05))
-                max_lines_allowed = 3  # Prevent excessive line count
+            total_text_h = len(lines) * line_height if len(lines) > 1 else actual_size
+            box_top = int(canvas_h * config.clear_area[1]) if config.clear_area else None
+            box_bottom = int(canvas_h * config.clear_area[3]) if config.clear_area else None
+            anchor_y = int(canvas_h * config.y_pct)
 
-                if config.clear_area:
-                    clear_h_px = int(canvas_h * (config.clear_area[3] - config.clear_area[1]))
-                else:
-                    clear_h_px = int(canvas_h * 0.15)  # Reasonable default region height
+            curr_y = self.text_service.compute_vertical_start_y(
+                anchor_y=anchor_y,
+                total_height=total_text_h,
+                v_align=v_align,
+                box_top=box_top,
+                box_bottom=box_bottom,
+            )
 
-                best_font = None
-                best_lines = None
-                best_size = wrap_size
-
-                while wrap_size >= min_size:
-                    font = self.text_service.load_font(config.font_family, wrap_size)
-                    lines = self.text_service.wrap_text(draw, text_str, font, max_width)
-                    line_height = int(wrap_size * config.line_spacing)
-                    total_text_h = len(lines) * line_height
-
-                    if total_text_h <= clear_h_px and len(lines) <= max_lines_allowed:
-                        best_font = font
-                        best_lines = lines
-                        best_size = wrap_size
-                        break
-
-                    best_font = font
-                    best_lines = lines
-                    best_size = wrap_size
-                    wrap_size -= wrap_step
-
-                font = best_font or self.text_service.load_font(config.font_family, min_size)
-                lines = best_lines or self.text_service.wrap_text(draw, text_str, font, max_width)
-                line_height = int(best_size * config.line_spacing)
-                total_text_h = len(lines) * line_height
-
-                start_y = int(canvas_h * config.y_pct) - (total_text_h // 2)
-                curr_y = start_y
-
-                for line in lines:
-                    bbox = draw.textbbox((0, 0), line, font=font)
-                    line_w = bbox[2] - bbox[0]
-                    if config.align == "center":
-                        if config.clear_area:
-                            box_center_x = (config.clear_area[0] + config.clear_area[2]) / 2.0 * canvas_w
-                            line_x = int(box_center_x - (line_w / 2.0))
-                        else:
-                            line_x = self.text_service.calculate_center_x(canvas_w, line_w)
-                    elif config.align == "right":
-                        line_x = int(canvas_w * config.x_pct) - line_w
-                    else:
-                        line_x = int(canvas_w * config.x_pct)
-
-                    draw.text((line_x, curr_y), line, font=font, fill=config.color)
-                    curr_y += line_height
-            else:
-                # Single-line rendering: text fits within max_width at actual_size
+            for line in lines:
+                line_w = self.text_service.measure_text_width(draw, line, font)
                 if config.align == "center":
                     if config.clear_area:
                         box_center_x = (config.clear_area[0] + config.clear_area[2]) / 2.0 * canvas_w
-                        x = int(box_center_x - (text_w / 2.0))
+                        line_x = int(box_center_x - (line_w / 2.0))
                     else:
-                        x = self.text_service.calculate_center_x(canvas_w, text_w)
+                        line_x = self.text_service.calculate_center_x(canvas_w, line_w)
                 elif config.align == "right":
-                    x = int(canvas_w * config.x_pct) - text_w
+                    line_x = int(canvas_w * config.x_pct) - line_w
                 else:
-                    x = int(canvas_w * config.x_pct)
+                    line_x = int(canvas_w * config.x_pct)
 
-                y = int(canvas_h * config.y_pct) - (actual_size // 2)
-                draw.text((x, y), text_str, font=font, fill=config.color)
+                draw.text((line_x, curr_y), line, font=font, fill=config.color)
+                curr_y += line_height
 
         # Export result (PNG or PDF based on manifest default_format)
         out_buf = io.BytesIO()
@@ -205,5 +182,7 @@ class PillowImageEngine:
             content=out_buf.getvalue(),
             filename=filename,
             mime_type=mime,
-            metadata={"canvas_size": f"{canvas_w}x{canvas_h}", "format": out_fmt}
+            metadata={"canvas_size": f"{canvas_w}x{canvas_h}", "format": out_fmt},
+            overflowed=any_overflow,
+            warnings=render_warnings,
         )
