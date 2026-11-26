@@ -8,10 +8,13 @@ Supports both vector PDF export and high-resolution raster PNG export.
 import dataclasses
 import io
 import re
+import threading
 from typing import Dict, Any, List, Tuple
 import pymupdf as fitz
 from ..protocols import CertificateEngine
 from ..models import TemplateManifest, RenderResult
+
+_PYMUPDF_LOCK = threading.Lock()
 
 
 def _parse_hex_color(color_str: str) -> Tuple[float, float, float]:
@@ -91,6 +94,15 @@ class PyMuPdfEngine:
         fields: Dict[str, Any],
         manifest: TemplateManifest
     ) -> RenderResult:
+        with _PYMUPDF_LOCK:
+            return self._render_unlocked(template_bytes, fields, manifest)
+
+    def _render_unlocked(
+        self,
+        template_bytes: bytes,
+        fields: Dict[str, Any],
+        manifest: TemplateManifest
+    ) -> RenderResult:
         doc = fitz.open(stream=template_bytes, filetype="pdf")
         if doc.page_count == 0:
             raise ValueError("PDF template contains no pages.")
@@ -110,17 +122,18 @@ class PyMuPdfEngine:
                 page.add_redact_annot(clear_r, fill=bg_color)
                 has_redactions = True
 
-        # 2. Defensively redact any curly-brace placeholder tags like {{name}}, {{work}}, {{date}}
+        # 2. Defensively redact curly-brace placeholder tags without clipping adjacent static words
         page_text = page.get_text()
         found_tags = set(re.findall(r"\{\{([^}]+)\}\}", page_text))
         for tag in found_tags:
             tag_str = f"{{{{{tag}}}}}"
             occurrences = page.search_for(tag_str)
             for occ in occurrences:
-                # Expand slightly to erase full character boundaries without painting an opaque box
-                r_exp = fitz.Rect(occ.x0 - 2, occ.y0 - 2, occ.x1 + 2, occ.y1 + 2)
-                page.add_redact_annot(r_exp, fill=None)
-                has_redactions = True
+                # Inset slightly so adjacent static text (e.g., '{{year}}Year') is never clipped
+                r_exp = fitz.Rect(occ.x0 + 0.25, occ.y0 + 0.5, occ.x1 - 0.25, occ.y1 - 0.5)
+                if r_exp.width > 0 and r_exp.height > 0:
+                    page.add_redact_annot(r_exp, fill=None)
+                    has_redactions = True
 
         if has_redactions:
             page.apply_redactions()
@@ -180,21 +193,22 @@ class PyMuPdfEngine:
             else:
                 x0 = anchor_x0
 
-            # Font selection
+            # Font selection (honor bold weight explicitly)
             fam = (config.font_family or "").lower()
+            wants_bold = "bold" in fam
             if "serif" in fam:
-                font_choice = "tiro"
+                font_choice = "tibo" if wants_bold else "tiro"
             elif "script" in fam:
-                font_choice = "tiit"
+                font_choice = "tibi" if wants_bold else "tiit"
             else:
-                font_choice = "helv"
+                font_choice = "hebo" if wants_bold else "helv"
 
             align_val = 1 if config.align == "center" else (2 if config.align == "right" else 0)
             color_tuple = _parse_hex_color(config.color)
 
             # Font size calculation in PDF points (72 DPI)
-            font_size = max(11, int(page_h * config.font_size_pct * 0.78))
-            min_size = max(9, int(page_h * (getattr(config, "min_font_size_pct", None) or 0.012) * 0.78))
+            max_font_pt = max(6.0, round(page_h * config.font_size_pct, 1))
+            min_size = max(4.5, round(page_h * (getattr(config, "min_font_size_pct", None) or 0.012), 1))
 
             # Maximum allowed box height
             if max_h_pct is not None:
@@ -202,28 +216,41 @@ class PyMuPdfEngine:
             elif config.clear_area:
                 max_box_h = max(
                     page_h * (config.clear_area[3] - config.clear_area[1]),
-                    font_size * line_spacing * max_lines,
+                    max_font_pt * line_spacing * max_lines,
                 )
             else:
-                max_box_h = max(page_h * config.font_size_pct * 1.8, font_size * line_spacing * max_lines)
+                max_box_h = max(page_h * config.font_size_pct * 1.8, max_font_pt * line_spacing * max_lines)
 
-            # Auto-downscale until wrapped lines fit box_w, max_lines, and max_box_h
-            fitted = False
-            lines: List[str] = [text_str]
-            while font_size >= min_size:
-                lines = _wrap_text_pdf(text_str, font_choice, font_size, box_w)
-                block_h = len(lines) * (font_size * line_spacing)
-                widths_ok = all(
-                    fitz.get_text_length(line, fontname=font_choice, fontsize=font_size) <= box_w
-                    for line in lines
+            # Binary search (0.5pt precision) for largest font size that fits box_w, max_lines, and max_box_h
+            def _fits_at(pt_size: float) -> Tuple[bool, List[str]]:
+                cand_lines = _wrap_text_pdf(text_str, font_choice, pt_size, box_w)
+                blk_h = len(cand_lines) * (pt_size * line_spacing)
+                w_ok = all(
+                    fitz.get_text_length(ln, fontname=font_choice, fontsize=pt_size) <= box_w
+                    for ln in cand_lines
                 )
-                height_ok = (max_h_pct is None) or (block_h <= max_box_h)
-                if widths_ok and len(lines) <= max_lines and height_ok:
+                h_ok = (max_h_pct is None) or (blk_h <= max_box_h)
+                return (w_ok and len(cand_lines) <= max_lines and h_ok), cand_lines
+
+            low_ticks = int(round(min_size * 2))
+            high_ticks = max(low_ticks, int(round(max_font_pt * 2)))
+            best_ticks = low_ticks
+            fitted = False
+            lines = _wrap_text_pdf(text_str, font_choice, min_size, box_w)
+
+            while low_ticks <= high_ticks:
+                mid_ticks = (low_ticks + high_ticks) // 2
+                mid_pt = mid_ticks / 2.0
+                ok, cand_lines = _fits_at(mid_pt)
+                if ok:
                     fitted = True
-                    break
-                if font_size == min_size:
-                    break
-                font_size -= 1
+                    best_ticks = mid_ticks
+                    lines = cand_lines
+                    low_ticks = mid_ticks + 1
+                else:
+                    high_ticks = mid_ticks - 1
+
+            font_size = best_ticks / 2.0
 
             if not fitted:
                 overflowed = True

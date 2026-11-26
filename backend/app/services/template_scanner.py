@@ -1,11 +1,16 @@
 """
 Template Placeholder Scanner Service
-Scans uploaded certificate template bytes (PDF or Image) for exact placeholder strings
-(e.g., {{name}}, {{year}}, {{dept}}, {{full_name}}, {{department}}) and extracts their
-exact bounding boxes and proportional coordinates for dynamic 100% accurate rendering.
+Scans uploaded certificate template bytes (PDF or Image) for placeholder strings
+(e.g., {{name}}, {{year}}, {{dept}}, {{full_name}}, {{department}}).
+Handles Canva-exported PDFs by:
+- Filtering out rotated/diagonal watermark text spans.
+- Reconstructing split {{...}} tokens across adjacent spans on the same baseline.
+- Computing exact available horizontal slot bounds between neighboring static words
+  so injected values never collide with surrounding text (e.g., 'of', 'Year', 'in').
 """
 
-from typing import Dict, Any, Optional
+import re
+from typing import Dict, List, Optional, Tuple
 import pymupdf
 from .models import TemplateManifest, FieldConfig
 
@@ -16,15 +21,141 @@ PLACEHOLDER_SYNONYMS = {
     "achievement_title": ["{{event}}", "{{title}}", "{{achievement_title}}", "[title]"],
 }
 
+_PLACEHOLDER_RE = re.compile(r"(\{\{[^}]+\}\}|\[(?:name|year|dept|title)\]|<(?:name|year|dept)>)", re.IGNORECASE)
+
+
+def _is_horizontal_line(line: Dict) -> bool:
+    """Returns True for normal horizontal text lines, filtering out angled/diagonal watermarks."""
+    dx, dy = line.get("dir", (1.0, 0.0))
+    return abs(dx - 1.0) <= 0.05 and abs(dy) <= 0.05
+
+
+def _collect_horizontal_tokens(page: pymupdf.Page) -> Tuple[List[Dict], List[Tuple[float, float, float, float, str]]]:
+    """
+    Extracts horizontal spans (merging adjacent spans on the same line) and
+    non-placeholder static word boxes for slot-boundary calculation.
+    """
+    text_dict = page.get_text("dict")
+    line_records: List[Dict] = []
+
+    for block in text_dict.get("blocks", []):
+        for line in block.get("lines", []):
+            if not _is_horizontal_line(line):
+                continue
+            spans = line.get("spans", [])
+            if not spans:
+                continue
+            full_text = "".join(s.get("text", "") for s in spans)
+            line_records.append({
+                "bbox": line["bbox"],
+                "text": full_text,
+                "spans": spans,
+            })
+
+    # Extract word boxes that lie on horizontal lines (exclude diagonal watermark words)
+    static_words: List[Tuple[float, float, float, float, str]] = []
+    for w in page.get_text("words"):
+        wx0, wy0, wx1, wy1, wtext = float(w[0]), float(w[1]), float(w[2]), float(w[3]), str(w[4])
+        wcy = (wy0 + wy1) / 2.0
+        on_horizontal = any(
+            lr["bbox"][1] - 2.0 <= wcy <= lr["bbox"][3] + 2.0
+            and wx0 >= lr["bbox"][0] - 2.0
+            and wx1 <= lr["bbox"][2] + 2.0
+            for lr in line_records
+        )
+        if not on_horizontal:
+            continue
+        if _PLACEHOLDER_RE.fullmatch(wtext.strip()):
+            continue
+        # If a word fuses placeholder + static text (e.g. '{{year}}Year'), keep only static part
+        if _PLACEHOLDER_RE.search(wtext):
+            continue
+        static_words.append((wx0, wy0, wx1, wy1, wtext))
+
+    # Also add non-placeholder span fragments (e.g. 'Year ' when fused in get_text('words'))
+    for lr in line_records:
+        for s in lr["spans"]:
+            stext = s.get("text", "")
+            stripped = stext.strip()
+            if not stripped or _PLACEHOLDER_RE.search(stripped):
+                continue
+            sx0, sy0, sx1, sy1 = s["bbox"]
+            # Trim leading/trailing space approximation when span has padding spaces
+            if len(stext) > 0:
+                char_w = (sx1 - sx0) / len(stext)
+                lead = len(stext) - len(stext.lstrip())
+                trail = len(stext) - len(stext.rstrip())
+                sx0_trim = sx0 + lead * char_w
+                sx1_trim = sx1 - trail * char_w
+                if sx1_trim > sx0_trim:
+                    static_words.append((sx0_trim, sy0, sx1_trim, sy1, stripped))
+
+    return line_records, static_words
+
+
+def _find_slot_bounds(
+    occ: pymupdf.Rect,
+    pw: float,
+    static_words: List[Tuple[float, float, float, float, str]],
+    field_key: str,
+) -> Tuple[float, float, float, int]:
+    """
+    Computes (center_x_pct, max_w_pct, font_size_hint, max_lines) for a placeholder rect.
+    When static words sit on the same baseline to the left/right, clamps the slot
+    strictly between them with a breathing margin and sets max_lines=1 so inline
+    values shrink cleanly onto a single line without wrapping over adjacent text.
+    """
+    cy = (occ.y0 + occ.y1) / 2.0
+    tol_y = max(4.0, (occ.y1 - occ.y0) * 0.8)
+
+    left_edge: Optional[float] = None
+    right_edge: Optional[float] = None
+
+    for wx0, wy0, wx1, wy1, _ in static_words:
+        wcy = (wy0 + wy1) / 2.0
+        if abs(wcy - cy) > tol_y:
+            continue
+        if wx1 <= occ.x0 + 1.5:
+            if left_edge is None or wx1 > left_edge:
+                left_edge = wx1
+        elif wx0 >= occ.x1 - 1.5:
+            if right_edge is None or wx0 < right_edge:
+                right_edge = wx0
+
+    margin = max(2.5, (occ.y1 - occ.y0) * 0.3)
+    if left_edge is not None and right_edge is not None and right_edge - left_edge > (occ.x1 - occ.x0):
+        slot_x0 = left_edge + margin
+        slot_x1 = right_edge - margin
+        center_x = ((slot_x0 + slot_x1) / 2.0) / pw
+        max_w = max(0.04, (slot_x1 - slot_x0) / pw)
+        return center_x, max_w, (occ.y1 - occ.y0), 1
+
+    # Standalone placeholder (no inline neighbors on both sides)
+    center_x = ((occ.x0 + occ.x1) / 2.0) / pw
+    raw_w_pct = (occ.x1 - occ.x0) / pw
+    if field_key == "full_name":
+        max_w = max(0.45, min(0.80, raw_w_pct * 4.0))
+    elif field_key == "achievement_title":
+        max_w = max(0.40, min(0.75, raw_w_pct * 3.5))
+    elif field_key == "department":
+        max_w = max(0.18, min(0.45, raw_w_pct * 2.5))
+    elif field_key == "year":
+        max_w = max(0.10, min(0.25, raw_w_pct * 2.0))
+    else:
+        max_w = max(0.25, min(0.65, raw_w_pct * 3.0))
+
+    return center_x, max_w, (occ.y1 - occ.y0), 3
+
+
 def scan_template_placeholders(template_bytes: bytes, filename: str, default_format: str = "png") -> TemplateManifest:
     """
-    Scans document template for exact placeholder occurrences.
-    If exact text matches are found, builds FieldConfig with exact bounding box coordinates.
-    Otherwise returns layout manifest calibrated for the certificate structure.
+    Scans document template for exact or split placeholder occurrences.
+    Filters out diagonal/rotated watermark text and computes slot-constrained
+    FieldConfig bounding boxes. Falls back to calibrated manifest if none found.
     """
     fn_lower = filename.lower()
     ext = fn_lower.split(".")[-1]
-    
+
     found_fields: Dict[str, FieldConfig] = {}
     try:
         if ext == "pdf":
@@ -39,50 +170,38 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
             page = doc[0]
             pw = page.rect.width
             ph = page.rect.height
+            _, static_words = _collect_horizontal_tokens(page)
 
             for field_key, search_terms in PLACEHOLDER_SYNONYMS.items():
                 for term in search_terms:
                     rects = page.search_for(term)
                     if rects:
                         r = rects[0]
-                        
-                        center_x = (r.x0 + r.x1) / 2.0 / pw
-                        center_y = (r.y0 + r.y1) / 2.0 / ph
-                        
-                        x1_pct = max(0.0, (r.x0 / pw) - 0.005)
-                        y1_pct = max(0.0, (r.y0 / ph) - 0.008)
-                        x2_pct = min(1.0, (r.x1 / pw) + 0.005)
-                        y2_pct = min(1.0, (r.y2 if hasattr(r, 'y2') else r.y1) / ph + 0.008)
+                        center_x, max_w, token_h, slot_max_lines = _find_slot_bounds(r, pw, static_words, field_key)
+                        center_y = ((r.y0 + r.y1) / 2.0) / ph
 
-                        # Give realistic max_w_pct per field type instead of shrinking to token width
-                        raw_w_pct = (r.x1 - r.x0) / pw
-                        if field_key == "full_name":
-                            max_w = max(0.45, min(0.80, raw_w_pct * 4.0))
-                        elif field_key == "achievement_title":
-                            max_w = max(0.40, min(0.75, raw_w_pct * 3.5))
-                        elif field_key == "department":
-                            max_w = max(0.18, min(0.45, raw_w_pct * 2.5))
-                        elif field_key == "year":
-                            max_w = max(0.10, min(0.25, raw_w_pct * 2.0))
-                        else:
-                            max_w = max(0.25, min(0.65, raw_w_pct * 3.0))
+                        x1_pct = max(0.0, r.x0 / pw)
+                        y1_pct = max(0.0, r.y0 / ph)
+                        x2_pct = min(1.0, r.x1 / pw)
+                        y2_pct = min(1.0, r.y1 / ph)
 
-                        font_size_pct = round((r.y1 - r.y0) / ph, 4)
+                        font_size_pct = round(token_h / ph, 4)
                         if font_size_pct < 0.015:
-                            font_size_pct = 0.030
+                            font_size_pct = 0.026
 
                         found_fields[field_key] = FieldConfig(
                             name=field_key,
                             x_pct=round(center_x, 4),
                             y_pct=round(center_y, 4),
                             max_w_pct=round(max_w, 4),
-                            font_family="sans-serif",
+                            max_lines=slot_max_lines,
+                            font_family="sans-serif-bold" if field_key == "full_name" else "sans-serif",
                             font_size_pct=font_size_pct,
-                            min_font_size_pct=0.015,
+                            min_font_size_pct=round(max(0.012, font_size_pct * 0.55), 4),
                             align="center",
                             color="#111827",
                             clear_area=(round(x1_pct, 4), round(y1_pct, 4), round(x2_pct, 4), round(y2_pct, 4)),
-                            clear_bg_color="transparent"
+                            clear_bg_color="transparent",
                         )
                         break
             doc.close()
@@ -96,7 +215,7 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
             default_format=default_format,
             base_width=2000,
             base_height=1414,
-            fields=found_fields
+            fields=found_fields,
         )
 
     return TemplateManifest(
@@ -110,7 +229,7 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
                 name="full_name",
                 x_pct=0.470,
                 y_pct=0.592,
-                max_w_pct=0.20,
+                max_w_pct=0.175,
                 font_family="sans-serif",
                 font_size_pct=0.024,
                 min_font_size_pct=0.012,
@@ -121,9 +240,9 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
             ),
             "year": FieldConfig(
                 name="year",
-                x_pct=0.630,
+                x_pct=0.625,
                 y_pct=0.592,
-                max_w_pct=0.07,
+                max_w_pct=0.070,
                 font_family="sans-serif",
                 font_size_pct=0.024,
                 min_font_size_pct=0.012,
@@ -134,9 +253,9 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
             ),
             "department": FieldConfig(
                 name="department",
-                x_pct=0.758,
+                x_pct=0.748,
                 y_pct=0.592,
-                max_w_pct=0.08,
+                max_w_pct=0.075,
                 font_family="sans-serif",
                 font_size_pct=0.024,
                 min_font_size_pct=0.012,
@@ -145,5 +264,5 @@ def scan_template_placeholders(template_bytes: bytes, filename: str, default_for
                 clear_area=(0.715, 0.550, 0.800, 0.635),
                 clear_bg_color="transparent",
             ),
-        }
+        },
     )

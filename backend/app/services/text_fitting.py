@@ -18,24 +18,31 @@ class TextFittingService:
         self._font_cache = {}
 
     def get_font_path(self, font_family: str) -> Optional[str]:
-        """Resolves font path from custom assets, Windows system fonts, or fallbacks"""
+        """Resolves font path from custom assets, Windows system fonts, or fallbacks, honoring bold weight."""
         font_family = font_family.lower()
+        wants_bold = "bold" in font_family
 
         # 1. Check custom assets folder
         if os.path.exists(self.custom_font_dir):
-            for fn in os.listdir(self.custom_font_dir):
-                if font_family in fn.lower() and fn.endswith((".ttf", ".otf")):
+            files = [fn for fn in os.listdir(self.custom_font_dir) if fn.endswith((".ttf", ".otf"))]
+            if wants_bold:
+                for fn in files:
+                    fn_l = fn.lower()
+                    if "bold" in fn_l and (font_family.replace("-bold", "").replace("bold", "").strip() in fn_l or "sans" in font_family):
+                        return os.path.join(self.custom_font_dir, fn)
+            for fn in files:
+                if font_family in fn.lower():
                     return os.path.join(self.custom_font_dir, fn)
 
         # 2. Check Windows System Fonts
         win_fonts = r"C:\Windows\Fonts"
         if os.path.exists(win_fonts):
             if "script" in font_family or "cursive" in font_family:
-                candidates = ["segoesc.ttf", "FRSCRIPT.TTF", "SCRIPTBL.TTF", "georgia.ttf"]
+                candidates = ["segoescb.ttf", "segoesc.ttf", "FRSCRIPT.TTF", "SCRIPTBL.TTF", "georgia.ttf"] if wants_bold else ["segoesc.ttf", "FRSCRIPT.TTF", "SCRIPTBL.TTF", "georgia.ttf"]
             elif "serif" in font_family or "times" in font_family or "cinzel" in font_family:
-                candidates = ["times.ttf", "georgia.ttf", "pala.ttf", "arial.ttf"]
+                candidates = ["timesbd.ttf", "georgiab.ttf", "times.ttf", "georgia.ttf", "pala.ttf"] if wants_bold else ["times.ttf", "georgia.ttf", "pala.ttf", "arial.ttf"]
             else:
-                candidates = ["arial.ttf", "calibri.ttf", "segoeui.ttf"]
+                candidates = ["arialbd.ttf", "calibrib.ttf", "segoeuib.ttf", "arial.ttf", "calibri.ttf", "segoeui.ttf"] if wants_bold else ["arial.ttf", "calibri.ttf", "segoeui.ttf"]
 
             for cand in candidates:
                 cand_path = os.path.join(win_fonts, cand)
@@ -67,6 +74,39 @@ class TextFittingService:
         self._font_cache[cache_key] = font
         return font
 
+    @staticmethod
+    def fit_font_size_binary_search(
+        text: str,
+        measure_fn,
+        max_width: int,
+        min_font: int,
+        max_font: int,
+    ) -> Tuple[int, int]:
+        """
+        Deterministic O(log(max_font - min_font)) binary search for the largest font size
+        in [min_font, max_font] where measure_fn(text, size) <= max_width.
+        Returns (best_size, measured_width).
+        """
+        if max_font <= min_font:
+            return min_font, measure_fn(text, min_font)
+
+        low = min_font
+        high = max_font
+        best_size = min_font
+        best_width = measure_fn(text, min_font)
+
+        while low <= high:
+            mid = (low + high) // 2
+            w = measure_fn(text, mid)
+            if w <= max_width:
+                best_size = mid
+                best_width = w
+                low = mid + 1
+            else:
+                high = mid - 1
+
+        return best_size, best_width
+
     def fit_text_to_width(
         self,
         draw: ImageDraw.ImageDraw,
@@ -77,22 +117,22 @@ class TextFittingService:
         min_size: int = 18
     ) -> Tuple[ImageFont.FreeTypeFont, int, int]:
         """
-        Dynamically auto-scales font size down until text fits within max_width.
+        Dynamically auto-scales font size using binary search until text fits within max_width.
         Returns: (fitted_font, actual_font_size, text_width)
         """
-        current_size = target_size
-        step = max(1, int(target_size * 0.025))
-        while current_size >= min_size:
-            font = self.load_font(font_family, current_size)
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            if text_width <= max_width:
-                return font, current_size, text_width
-            current_size -= step
+        def _measure(txt: str, sz: int) -> int:
+            font = self.load_font(font_family, sz)
+            bbox = draw.textbbox((0, 0), txt, font=font)
+            return bbox[2] - bbox[0]
 
-        font = self.load_font(font_family, min_size)
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return font, min_size, bbox[2] - bbox[0]
+        best_size, best_width = self.fit_font_size_binary_search(
+            text=text,
+            measure_fn=_measure,
+            max_width=max_width,
+            min_font=min_size,
+            max_font=max(min_size, target_size),
+        )
+        return self.load_font(font_family, best_size), best_size, best_width
 
     def measure_text_width(
         self,

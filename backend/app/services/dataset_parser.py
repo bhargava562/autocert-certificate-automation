@@ -12,6 +12,7 @@ and row-level validation.
 
 import io
 import os
+import re
 import csv
 import json
 import datetime
@@ -22,7 +23,7 @@ import xlrd
 
 
 def _coerce_cell_value(val: Any) -> str:
-    """Converts cell values (numbers, dates, booleans) to clean strings."""
+    """Converts cell values (numbers, dates, booleans) to clean normalized strings."""
     if val is None:
         return ""
     if isinstance(val, (datetime.date, datetime.datetime)):
@@ -36,7 +37,7 @@ def _coerce_cell_value(val: Any) -> str:
         return str(val)
     if isinstance(val, bool):
         return "true" if val else "false"
-    return str(val).strip()
+    return re.sub(r"\s+", " ", str(val)).strip()
 
 
 def parse_xlsx_bytes(content: bytes) -> List[Dict[str, Any]]:
@@ -117,15 +118,25 @@ def _parse_raw_rows(rows: List[Any]) -> List[Dict[str, Any]]:
     if not rows:
         return []
 
-    # Find the first non-empty row as header
+    # Find the first real header row (skipping single-cell title/banner rows when multi-column data exists)
     header_idx = -1
     headers: List[str] = []
+    first_non_empty_idx = -1
+    first_non_empty_headers: List[str] = []
     for idx, row in enumerate(rows):
         cleaned = [_coerce_cell_value(c) for c in (row or [])]
-        if any(cleaned):
+        non_empty_count = sum(1 for c in cleaned if c)
+        if non_empty_count > 0 and first_non_empty_idx == -1:
+            first_non_empty_idx = idx
+            first_non_empty_headers = cleaned
+        if non_empty_count >= 2:
             headers = cleaned
             header_idx = idx
             break
+
+    if header_idx == -1 and first_non_empty_idx != -1:
+        header_idx = first_non_empty_idx
+        headers = first_non_empty_headers
 
     if header_idx == -1 or not headers:
         return []

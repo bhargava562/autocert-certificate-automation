@@ -224,24 +224,57 @@ def build_default_manifest(filename: str, output_format: str = "png") -> Templat
         )
 
 
+def _clean_str(val: Any) -> str:
+    return re.sub(r"\s+", " ", str(val or "")).strip()
+
+
+def _normalize_year(val: str) -> str:
+    cleaned = _clean_str(val)
+    lower = cleaned.lower()
+    if lower in ("ll", "ii"):
+        return "II"
+    if lower in ("lll", "iii"):
+        return "III"
+    if lower == "iv":
+        return "IV"
+    return cleaned
+
+
 def normalize_record(p: Dict[str, Any]) -> Dict[str, Any]:
     """Normalizes participant fields. Empty optional fields remain empty and are not drawn over pre-printed template text."""
-    full_name = p.get("full_name") or p.get("recipient_name") or p.get("name") or ""
-    achievement_text = p.get("achievement_text") or p.get("description") or ""
+    lowered = {str(k).strip().lower(): v for k, v in p.items()}
+
+    def _pick(*keys: str) -> str:
+        for k in keys:
+            v = p.get(k)
+            if v is None:
+                v = lowered.get(k.lower())
+            if v is not None and _clean_str(v):
+                return _clean_str(v)
+        return ""
+
+    full_name = _pick(
+        "full_name", "recipient_name", "name", "Participant Name",
+        "Student Name (as per College ID card)", "Student Name",
+    )
+    achievement_text = _pick("achievement_text", "description", "citation")
 
     return {
-        "full_name": full_name.strip(),
-        "certificate_id": str(p.get("certificate_id") or "").strip(),
-        "email": str(p.get("email") or p.get("email_address") or p.get("mail") or "").strip(),
-        "year": str(p.get("year") or p.get("academic_year") or p.get("batch_year") or p.get("class") or "").strip(),
-        "department": str(p.get("department") or p.get("dept") or p.get("branch") or p.get("stream") or "").strip(),
-        "achievement_title": str(p.get("achievement_title") or p.get("role") or "").strip(),
-        "achievement_text": achievement_text.strip() if achievement_text else "",
-        "event_name": str(p.get("event_name") or p.get("achievement_title") or "").strip(),
-        "issue_date": str(p.get("issue_date") or p.get("participated_date") or "").strip(),
-        "signer_name": str(p.get("signer_name") or "").strip(),
-        "signer_title": str(p.get("signer_title") or "").strip(),
-        "organization": str(p.get("organization_on_certificate") or p.get("organization") or "").strip(),
+        "full_name": full_name,
+        "certificate_id": _pick("certificate_id"),
+        "email": _pick(
+            "email", "email_address", "mail", "Email Address",
+            "College Email ID (do not give personal Email)",
+        ),
+        "year": _normalize_year(_pick("year", "Year of Study", "academic_year", "batch_year", "class")),
+        "department": _pick("department", "dept", "branch", "stream"),
+        "achievement_title": _pick("achievement_title", "role", "event", "Event"),
+        "achievement_text": achievement_text,
+        "event_name": _pick("event_name", "event", "Event", "achievement_title"),
+        "issue_date": _pick("issue_date", "participated_date"),
+        "signer_name": _pick("signer_name"),
+        "signer_title": _pick("signer_title"),
+        "organization": _pick("organization_on_certificate", "organization"),
     }
 
 
@@ -457,21 +490,10 @@ async def generate_certificates(
         )
 
     out_format = "pdf" if format.strip().lower() == "pdf" else "png"
-    use_vector_pdf = (ext == "pdf" and out_format == "pdf")
+    use_pdf_engine = (ext == "pdf")
 
-    # 2. Prepare template bytes: keep vector PDF bytes for PDF->PDF, rasterize only when needed
-    if use_vector_pdf:
-        render_template_bytes = template_bytes
-    elif ext == "pdf":
-        try:
-            render_template_bytes = convert_pdf_to_image_bytes(template_bytes, dpi=200)
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Could not parse PDF template: {str(e)}"
-            )
-    else:
-        render_template_bytes = template_bytes
+    # 2. Prepare template bytes: keep vector PDF bytes for PyMuPdfEngine (both PDF & PNG export)
+    render_template_bytes = template_bytes
 
     # 3. Parse participant data from uploaded spreadsheet file OR form JSON string
     raw_participants = []
@@ -507,18 +529,34 @@ async def generate_certificates(
             detail="Participant dataset must be a non-empty list of records."
         )
 
-    # 4. Normalize records and validate essential fields
+    # 4. Normalize records and validate essential fields (flag missing-name rows instead of crashing whole batch)
     normalized_list = []
+    invalid_results = []
     for idx, raw_p in enumerate(raw_participants, start=1):
         norm = normalize_record(raw_p)
-        if not norm["full_name"]:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Record #{idx} is missing required recipient name."
-            )
         if not norm["certificate_id"]:
             norm["certificate_id"] = f"CERT-{idx:04d}"
-        normalized_list.append(norm)
+        if not norm["full_name"]:
+            invalid_results.append({
+                "certificate_id": norm["certificate_id"],
+                "participant_name": "",
+                "email": norm.get("email", ""),
+                "status": "Failed",
+                "filename": "",
+                "preview_url": "",
+                "error": f"Record #{idx} is missing required recipient name.",
+                "overflowed": False,
+                "warnings": [f"Record #{idx} is missing required recipient name."],
+                "email_status": "Skipped (missing recipient name)",
+            })
+        else:
+            normalized_list.append(norm)
+
+    if not normalized_list:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="All records are missing required recipient name."
+        )
 
     # 5. Build manifest & initialize rendering engine by scanning template for exact text placeholders
     manifest = scan_template_placeholders(
@@ -526,17 +564,17 @@ async def generate_certificates(
         filename=filename,
         default_format=out_format
     )
-    if use_vector_pdf:
+    if use_pdf_engine:
         engine: CertificateEngine = PyMuPdfEngine()
     else:
         text_service = TextFittingService()
         engine = PillowImageEngine(text_service)
 
-    # 6. Concurrency: Multi-threaded parallel certificate rendering in batch-scoped directory
+    # 6. Concurrency: PyMuPDF is not thread-safe, so run single-worker for PDF engine; multi-thread for Pillow
     batch_id = f"batch_{uuid.uuid4().hex[:8]}"
     batch_output_dir = os.path.join(OUTPUT_DIR, batch_id)
     os.makedirs(batch_output_dir, exist_ok=True)
-    max_workers = min(16, (os.cpu_count() or 1) + 4)
+    max_workers = 1 if use_pdf_engine else min(16, (os.cpu_count() or 1) + 4)
 
     def _render_task(item):
         return render_single_certificate(
@@ -609,19 +647,22 @@ async def generate_certificates(
         for r in generated_results:
             r["email_status"] = "Not Sent"
 
-    # Clean up internal fields from client response
+    # Clean up internal fields from client response and include validation-failed rows
     for r in generated_results:
         r.pop("file_path", None)
         r.pop("item_data", None)
 
+    all_results = generated_results + invalid_results
+
     return {
         "success": True,
         "batch_id": batch_id,
-        "total_count": len(normalized_list),
-        "generated_count": sum(1 for r in generated_results if r["status"] == "Generated"),
+        "total_count": len(all_results),
+        "generated_count": sum(1 for r in all_results if r["status"] == "Generated"),
+        "failed_count": sum(1 for r in all_results if r["status"] == "Failed"),
         "emails_sent_count": emails_dispatched,
         "emails_failed_count": emails_failed,
-        "certificates": generated_results
+        "certificates": all_results,
     }
 
 

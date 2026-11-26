@@ -2,8 +2,8 @@ import React from 'react';
 import { Check, AlertTriangle, XCircle, Mail, Send } from 'lucide-react';
 
 export const SYSTEM_FIELDS = [
-  { key: 'full_name', label: 'Recipient Name', required: true, synonyms: ['full_name', 'name', 'recipient_name', 'participant_name', 'student_name'] },
-  { key: 'email', label: 'Recipient Email', required: false, synonyms: ['email', 'email_address', 'mail', 'participant_email', 'recipient_email'] },
+  { key: 'full_name', label: 'Recipient Name', required: true, synonyms: ['full_name', 'name', 'recipient_name', 'participant_name', 'student_name', 'student name (as per college id card)', 'student name'] },
+  { key: 'email', label: 'Recipient Email', required: false, synonyms: ['email', 'email_address', 'mail', 'email address', 'participant_email', 'recipient_email', 'college email id (do not give personal email)'] },
   { key: 'year', label: 'Year / Class', required: false, synonyms: ['year', 'academic_year', 'batch_year', 'class', 'grade'] },
   { key: 'department', label: 'Department / Branch', required: false, synonyms: ['department', 'dept', 'branch', 'stream', 'major', 'field'] },
   { key: 'achievement_title', label: 'Achievement Title', required: false, synonyms: ['achievement_title', 'role', 'event_name', 'course_title', 'title'] },
