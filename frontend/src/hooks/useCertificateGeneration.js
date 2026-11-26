@@ -1,24 +1,30 @@
 import { useState, useCallback } from 'react';
-import { generateCertificatesApi, sendSingleEmailApi } from '../services/certificateApi';
+import {
+  generateCertificatesApi,
+  sendBatchEmailsApi,
+  sendSingleEmailApi,
+} from '../services/certificateApi';
 import { SYSTEM_FIELDS } from '../components/DataMapping';
 
 export function useCertificateGeneration() {
   const [templateFile, setTemplateFile] = useState(null);
   const [uploadedData, setUploadedData] = useState(null);
   const [mapping, setMapping] = useState({});
-  const [validation, setValidation] = useState({ isValid: false, blockingErrors: [] });
+  const [validation, setValidation] = useState({ isValid: false, blockingErrors: [], warnings: [] });
 
   // Email & Format delivery options
   const [sendEmails, setSendEmails] = useState(false);
   const [emailSubject, setEmailSubject] = useState('');
   const [outputFormat, setOutputFormat] = useState('png'); // 'png' or 'pdf'
   const [emailStats, setEmailStats] = useState({ sent: 0, failed: 0 });
+  const [isSendingBatchEmails, setIsSendingBatchEmails] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState('');
   const [generationError, setGenerationError] = useState('');
 
   // Critical: Initially empty! No fake/demo data.
+  const [batchId, setBatchId] = useState(null);
   const [generatedCertificates, setGeneratedCertificates] = useState([]);
   const [selectedCertificate, setSelectedCertificate] = useState(null);
 
@@ -95,8 +101,21 @@ export function useCertificateGeneration() {
         throw new Error('Backend did not return any generated certificates.');
       }
 
-      setGeneratedCertificates(response.certificates);
-      setSelectedCertificate(response.certificates[0]);
+      setBatchId(response.batch_id || null);
+
+      const normalizedCertificates = response.certificates.map((cert) => ({
+        ...cert,
+        preview_url:
+          cert.preview_url ||
+          (cert.filename
+            ? response.batch_id
+              ? `/api/certificates/download/${response.batch_id}/${cert.filename}`
+              : `/api/certificates/download/${cert.filename}`
+            : ''),
+      }));
+
+      setGeneratedCertificates(normalizedCertificates);
+      setSelectedCertificate(normalizedCertificates[0]);
       setEmailStats({
         sent: response.emails_sent_count || 0,
         failed: response.emails_failed_count || 0,
@@ -110,6 +129,75 @@ export function useCertificateGeneration() {
     }
   }, [templateFile, uploadedData, mapping, validation, sendEmails, emailSubject, outputFormat]);
 
+  // Dispatch bulk emails after reviewing generated certificates and any overflow warnings
+  const handleSendBatchEmails = useCallback(
+    async (overrideSubject) => {
+      const eligible = generatedCertificates.filter(
+        (c) => c.status === 'Generated' && c.email && c.filename && c.email_status !== 'Sent'
+      );
+
+      if (eligible.length === 0) {
+        throw new Error('No pending generated certificates with recipient email addresses to send.');
+      }
+
+      setIsSendingBatchEmails(true);
+      try {
+        const res = await sendBatchEmailsApi({
+          batch_id: batchId || undefined,
+          filenames: eligible.map((c) => c.filename),
+          recipients: eligible.map((c) => ({
+            ...(c.item_data || {}),
+            certificate_id: c.certificate_id,
+            filename: c.filename,
+            email: c.email,
+            full_name: c.participant_name,
+            achievement_title: c.achievement_title || '',
+            issue_date: c.issue_date || '',
+          })),
+          subject: (overrideSubject ?? emailSubject) || undefined,
+        });
+
+        const results = Array.isArray(res?.results) ? res.results : [];
+        const byCertId = new Map();
+        const byEmail = new Map();
+        results.forEach((r) => {
+          if (r.certificate_id) byCertId.set(r.certificate_id, r);
+          if (r.email) byEmail.set(r.email, r);
+        });
+
+        setGeneratedCertificates((prev) => {
+          const updated = prev.map((c) => {
+            const match = byCertId.get(c.certificate_id) || byEmail.get(c.email);
+            if (!match) return c;
+            return {
+              ...c,
+              email_status: match.status,
+              email_error: match.error || null,
+            };
+          });
+
+          const sentCount = updated.filter((c) => c.email_status === 'Sent').length;
+          const failedCount = updated.filter((c) => c.email_status?.startsWith('Failed')).length;
+          setEmailStats({ sent: sentCount, failed: failedCount });
+
+          return updated;
+        });
+
+        setSelectedCertificate((prev) => {
+          if (!prev) return prev;
+          const match = byCertId.get(prev.certificate_id) || byEmail.get(prev.email);
+          if (!match) return prev;
+          return { ...prev, email_status: match.status, email_error: match.error || null };
+        });
+
+        return res;
+      } finally {
+        setIsSendingBatchEmails(false);
+      }
+    },
+    [generatedCertificates, batchId, emailSubject]
+  );
+
   // Resend single email
   const handleResendEmail = useCallback(async (cert) => {
     if (!cert || !cert.email) {
@@ -117,6 +205,7 @@ export function useCertificateGeneration() {
     }
     try {
       const res = await sendSingleEmailApi({
+        batch_id: batchId || cert.batch_id || undefined,
         filename: cert.filename,
         email: cert.email,
         full_name: cert.participant_name,
@@ -153,7 +242,7 @@ export function useCertificateGeneration() {
       );
       throw err;
     }
-  }, [emailSubject]);
+  }, [batchId, emailSubject]);
 
   return {
     templateFile,
@@ -171,15 +260,18 @@ export function useCertificateGeneration() {
     outputFormat,
     setOutputFormat,
     emailStats,
+    isSendingBatchEmails,
     validation,
     setValidation,
     isGenerating,
     generationProgress,
     generationError,
+    batchId,
     generatedCertificates,
     selectedCertificate,
     setSelectedCertificate,
     handleGenerate,
+    handleSendBatchEmails,
     handleResendEmail,
   };
 }

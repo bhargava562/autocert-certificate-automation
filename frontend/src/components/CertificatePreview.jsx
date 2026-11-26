@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, ZoomIn, X, Mail, Send, Loader2, RefreshCw, AlertCircle } from 'lucide-react';
+import { Download, ZoomIn, X, Mail, Send, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { getCertificateImageUrl } from '../services/certificateApi';
 
 export default function CertificatePreview({ certificate, onResendEmail }) {
@@ -15,7 +15,10 @@ export default function CertificatePreview({ certificate, onResendEmail }) {
     );
   }
 
-  const imageUrl = getCertificateImageUrl(certificate.filename);
+  const imageUrl = getCertificateImageUrl(certificate.preview_url || certificate.filename);
+  const warnings = Array.isArray(certificate.warnings) ? certificate.warnings : [];
+  const hasOverflow = Boolean(certificate.overflowed);
+  const hasWarnings = hasOverflow || warnings.length > 0;
 
   const handleDownload = () => {
     const link = document.createElement('a');
@@ -58,6 +61,11 @@ export default function CertificatePreview({ certificate, onResendEmail }) {
             <span className={`badge ${isPdf ? 'badge-primary' : 'badge-neutral'}`} style={{ fontSize: '10px' }}>
               {isPdf ? 'PDF' : 'PNG'}
             </span>
+            {hasOverflow && (
+              <span className="badge badge-warning" style={{ fontSize: '10px' }}>
+                <AlertTriangle size={11} /> Text Overflow
+              </span>
+            )}
             {certificate.email_status && (
               <>
                 <span>•</span>
@@ -116,6 +124,42 @@ export default function CertificatePreview({ certificate, onResendEmail }) {
           </button>
         </div>
       </div>
+
+      {hasWarnings && (
+        <div
+          role="alert"
+          style={{
+            margin: '0 0 14px 0',
+            padding: '10px 14px',
+            borderRadius: '8px',
+            background: 'rgba(245, 158, 11, 0.12)',
+            border: '1px solid rgba(245, 158, 11, 0.35)',
+            color: '#fbbf24',
+            fontSize: '12px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '10px',
+          }}
+        >
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '1px' }} />
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: warnings.length > 0 ? '4px' : 0 }}>
+              {hasOverflow ? 'Text Overflow Detected' : 'Rendering Warnings'}
+            </div>
+            {warnings.length > 0 ? (
+              <ul style={{ margin: 0, paddingLeft: '16px', color: '#fde68a' }}>
+                {warnings.map((w, idx) => (
+                  <li key={idx}>{w}</li>
+                ))}
+              </ul>
+            ) : (
+              <div style={{ color: '#fde68a' }}>
+                One or more fields exceeded the template bounding box at minimum font size.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="image-canvas-wrapper" style={isPdf ? { padding: '8px', minHeight: '520px' } : {}}>
         {isPdf ? (

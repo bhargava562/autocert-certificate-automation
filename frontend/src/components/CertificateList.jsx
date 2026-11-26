@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Mail, Send, AlertCircle, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Mail, Send, AlertCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 
 export default function CertificateList({
   certificates = [],
@@ -62,6 +62,14 @@ export default function CertificateList({
     );
   };
 
+  const overflowCount = useMemo(
+    () =>
+      certificates.filter(
+        (c) => c.overflowed || (Array.isArray(c.warnings) && c.warnings.length > 0)
+      ).length,
+    [certificates]
+  );
+
   return (
     <div className="participant-list-card">
       <div className="list-header">
@@ -69,6 +77,11 @@ export default function CertificateList({
           <h4 style={{ fontSize: '15px', fontWeight: 600 }}>Participant List</h4>
           <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
             {certificates.length} generated certificate(s)
+            {overflowCount > 0 && (
+              <span style={{ color: '#fbbf24', marginLeft: '8px', fontWeight: 600 }}>
+                • {overflowCount} with warning(s)
+              </span>
+            )}
           </span>
         </div>
       </div>
@@ -92,6 +105,12 @@ export default function CertificateList({
           filtered.map((item, index) => {
             const isSelected = item.certificate_id === selectedId;
             const isItemSending = sendingId === item.certificate_id;
+            const itemWarnings = Array.isArray(item.warnings) ? item.warnings : [];
+            const hasOverflow = Boolean(item.overflowed);
+            const hasWarnings = hasOverflow || itemWarnings.length > 0;
+            const warningTitle = itemWarnings.length > 0
+              ? itemWarnings.join(' | ')
+              : 'Text exceeded template bounding box';
 
             return (
               <div
@@ -112,16 +131,40 @@ export default function CertificateList({
                   <div className="part-meta">
                     ID: <strong style={{ color: 'var(--text-secondary)' }}>{item.certificate_id}</strong>
                   </div>
+                  {hasWarnings && (
+                    <div
+                      style={{
+                        marginTop: '4px',
+                        fontSize: '11px',
+                        color: '#fbbf24',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                      title={warningTitle}
+                    >
+                      <AlertTriangle size={11} />
+                      <span>
+                        {itemWarnings[0] || 'Text overflow detected'}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-                  <div style={{ display: 'flex', gap: '6px' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '6px' }}>
                     <span className="badge badge-neutral" style={{ fontSize: '10px' }}>
                       {item.filename?.toLowerCase().endsWith('.pdf') ? 'PDF' : 'PNG'}
                     </span>
                     <span className={`badge ${item.status === 'Generated' ? 'badge-success' : 'badge-danger'}`}>
                       {item.status}
                     </span>
+                    {hasWarnings && (
+                      <span className="badge badge-warning" title={warningTitle}>
+                        <AlertTriangle size={11} />
+                        {hasOverflow ? 'Overflow' : `${itemWarnings.length} Warning${itemWarnings.length > 1 ? 's' : ''}`}
+                      </span>
+                    )}
                     {getEmailBadge(item.email_status, item.email_error)}
                   </div>
 

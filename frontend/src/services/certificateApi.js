@@ -5,6 +5,15 @@
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
+async function parseErrorResponse(res, fallbackMessage) {
+  try {
+    const errJson = await res.json();
+    return errJson.detail || fallbackMessage;
+  } catch {
+    return `Server returned status ${res.status}`;
+  }
+}
+
 export async function checkBackendHealth() {
   try {
     const res = await fetch(`${API_BASE_URL}/api/health`);
@@ -38,14 +47,21 @@ export async function generateCertificatesApi({
   });
 
   if (!res.ok) {
-    let errorDetail = 'Certificate generation failed';
-    try {
-      const errJson = await res.json();
-      errorDetail = errJson.detail || errorDetail;
-    } catch {
-      errorDetail = `Server returned status ${res.status}`;
-    }
-    throw new Error(errorDetail);
+    throw new Error(await parseErrorResponse(res, 'Certificate generation failed'));
+  }
+
+  return await res.json();
+}
+
+export async function sendBatchEmailsApi(payload) {
+  const res = await fetch(`${API_BASE_URL}/api/certificates/send-batch-emails`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(await parseErrorResponse(res, 'Sending batch emails failed'));
   }
 
   return await res.json();
@@ -59,14 +75,7 @@ export async function sendSingleEmailApi(payload) {
   });
 
   if (!res.ok) {
-    let errorDetail = 'Sending email failed';
-    try {
-      const errJson = await res.json();
-      errorDetail = errJson.detail || errorDetail;
-    } catch {
-      errorDetail = `Server returned status ${res.status}`;
-    }
-    throw new Error(errorDetail);
+    throw new Error(await parseErrorResponse(res, 'Sending email failed'));
   }
 
   return await res.json();
@@ -78,20 +87,19 @@ export async function testSmtpApi() {
   });
 
   if (!res.ok) {
-    let errorDetail = 'SMTP test failed';
-    try {
-      const errJson = await res.json();
-      errorDetail = errJson.detail || errorDetail;
-    } catch {
-      errorDetail = `Server returned status ${res.status}`;
-    }
-    throw new Error(errorDetail);
+    throw new Error(await parseErrorResponse(res, 'SMTP test failed'));
   }
 
   return await res.json();
 }
 
-export function getCertificateImageUrl(filename) {
-  if (!filename) return '';
-  return `${API_BASE_URL}/api/certificates/download/${encodeURIComponent(filename)}`;
+export function getCertificateImageUrl(pathOrFilename) {
+  if (!pathOrFilename) return '';
+  if (/^https?:\/\//i.test(pathOrFilename)) {
+    return pathOrFilename;
+  }
+  if (pathOrFilename.startsWith('/')) {
+    return `${API_BASE_URL}${pathOrFilename}`;
+  }
+  return `${API_BASE_URL}/api/certificates/download/${encodeURIComponent(pathOrFilename)}`;
 }

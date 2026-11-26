@@ -1,6 +1,5 @@
 import React, { useMemo, useEffect } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
-import { SYSTEM_FIELDS } from './DataMapping';
 
 export default function ValidationSummary({ records = [], mapping = {}, sendEmails = false, onValidationChange }) {
   const validationResult = useMemo(() => {
@@ -12,6 +11,7 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
         duplicateIdCount: 0,
         missingRequiredFields: false,
         blockingErrors: ['No data records loaded.'],
+        warnings: [],
         isValid: false,
       };
     }
@@ -20,6 +20,8 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
     const emailCol = mapping['email'];
 
     const blockingErrors = [];
+    const warnings = [];
+
     if (!nameCol) {
       blockingErrors.push('Recipient Name column is not mapped.');
     }
@@ -29,6 +31,9 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
 
     let validCount = 0;
     let warningCount = 0;
+    let missingNameCount = 0;
+    let invalidEmailCount = 0;
+    let missingOptionalCount = 0;
 
     records.forEach((row) => {
       const nameVal = nameCol ? String(row[nameCol] || '').trim() : '';
@@ -39,16 +44,21 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
 
       if (!nameVal) {
         hasError = true;
+        if (nameCol) {
+          missingNameCount++;
+        }
       }
 
       // Check email format if provided
       if (emailVal && !emailVal.includes('@')) {
         hasWarning = true;
+        invalidEmailCount++;
       }
 
       // Check if optional certificate details are missing
       if (!row[mapping['achievement_text']] && !row[mapping['achievement_title']]) {
         hasWarning = true;
+        missingOptionalCount++;
       }
 
       if (!hasError) {
@@ -59,6 +69,20 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
       }
     });
 
+    if (nameCol && validCount === 0) {
+      blockingErrors.push('No records contain a valid Recipient Name.');
+    }
+
+    if (missingNameCount > 0 && validCount > 0) {
+      warnings.push(`${missingNameCount} record(s) are missing a Recipient Name and will be skipped.`);
+    }
+    if (invalidEmailCount > 0) {
+      warnings.push(`${invalidEmailCount} record(s) have an invalid email address format.`);
+    }
+    if (missingOptionalCount > 0) {
+      warnings.push(`${missingOptionalCount} record(s) are missing optional achievement title/text.`);
+    }
+
     const isValid = blockingErrors.length === 0 && validCount > 0;
 
     return {
@@ -67,6 +91,7 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
       warningCount,
       duplicateIdCount: 0,
       blockingErrors,
+      warnings,
       isValid,
     };
   }, [records, mapping, sendEmails]);
@@ -85,7 +110,7 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
       {validationResult.warningCount > 0 && (
         <div className="val-item val-warning">
           <AlertTriangle size={18} />
-          <span>{validationResult.warningCount} records need attention</span>
+          <span>{validationResult.warningCount} records have non-blocking warnings</span>
         </div>
       )}
 
@@ -97,9 +122,48 @@ export default function ValidationSummary({ records = [], mapping = {}, sendEmai
       )}
 
       {validationResult.blockingErrors.length > 0 && (
-        <div style={{ width: '100%', marginTop: '8px', color: '#f87171', fontSize: '12px' }}>
+        <div
+          role="alert"
+          style={{
+            width: '100%',
+            marginTop: '8px',
+            padding: '10px 12px',
+            borderRadius: '6px',
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            color: '#f87171',
+            fontSize: '12px',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <XCircle size={14} />
+            <span>Blocking Errors (must fix before generating)</span>
+          </div>
           {validationResult.blockingErrors.map((err, i) => (
             <div key={i}>• {err}</div>
+          ))}
+        </div>
+      )}
+
+      {validationResult.warnings.length > 0 && (
+        <div
+          style={{
+            width: '100%',
+            marginTop: '8px',
+            padding: '10px 12px',
+            borderRadius: '6px',
+            background: 'rgba(245, 158, 11, 0.1)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            color: '#fbbf24',
+            fontSize: '12px',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <AlertTriangle size={14} />
+            <span>Warnings (non-blocking — generation allowed)</span>
+          </div>
+          {validationResult.warnings.map((warn, i) => (
+            <div key={i}>• {warn}</div>
           ))}
         </div>
       )}
