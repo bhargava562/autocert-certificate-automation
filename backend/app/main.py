@@ -38,11 +38,13 @@ app = FastAPI(
     version="1.1.0"
 )
 
-# Enable CORS for frontend development
+# Enable CORS from environment configuration (backend/.env -> CORS_ORIGINS)
+_startup_settings = load_settings()
+_cors_origins = list(_startup_settings.cors_origins)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

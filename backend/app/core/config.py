@@ -5,7 +5,22 @@ Loads settings safely from backend/.env without ever modifying or deleting it.
 
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
+
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+)
+
+
+def _parse_cors_origins(raw: Optional[str]) -> Tuple[str, ...]:
+    if not raw:
+        return DEFAULT_CORS_ORIGINS
+    origins = tuple(o.strip() for o in raw.split(",") if o.strip())
+    return origins or DEFAULT_CORS_ORIGINS
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -17,6 +32,7 @@ class Settings:
     environment: str = "development"
     port: int = 8000
     host: str = "0.0.0.0"
+    cors_origins: Tuple[str, ...] = DEFAULT_CORS_ORIGINS
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_user: Optional[str] = None
@@ -48,6 +64,7 @@ def load_settings(env_path: Optional[str] = None) -> Settings:
         environment=env.get("ENVIRONMENT", "development"),
         port=int(env.get("PORT", 8000)),
         host=env.get("HOST", "0.0.0.0"),
+        cors_origins=_parse_cors_origins(env.get("CORS_ORIGINS") or os.getenv("CORS_ORIGINS")),
         smtp_host=env.get("SMTP_HOST") or os.getenv("SMTP_HOST", "smtp.gmail.com"),
         smtp_port=int(env.get("SMTP_PORT") or os.getenv("SMTP_PORT", 587)),
         smtp_user=smtp_user,
